@@ -1,0 +1,195 @@
+<html>
+	<head>
+		<title>Tests</title>
+		<script src="lang.js"></script>
+		<script src="tests.js"></script>
+		<style>
+			.success { background: #b0eeb0; }
+			.success:hover { background: #a0ffa0; }
+
+			.fail { background: #cc9090; }
+			.fail:hover { background: #ff8080; }
+
+			.tests-container {
+				margin-left: 15px;
+			}
+
+			p, table { width: 100%; }
+
+			h1, h2, h3, h4, h5, h6 {
+				cursor: pointer;
+				text-decoration: underline;
+				font-family: 'Arial';
+
+				color: #303030;
+			}
+			h1:hover, h2:hover, h3:hover, h4:hover, h5:hover, h6:hover { color: #808080; }
+
+			td { 
+				width: 50%; 
+				white-space: pre;
+				font-family: 'Arial';
+			}
+
+			tr { 
+				height: 25px; 
+				cursor: pointer;
+			}
+
+			textarea {
+				display: block;
+				resize: none;
+				width: 100%;
+				height: 200px;
+			}
+
+			pre {
+				background: #f8f8f8;
+				border: 1px solid #bbbbbb;
+				padding: 10px;
+			}
+
+		</style>
+		<script>
+
+			var container, textIndex = -1;
+
+			var onload = function(){
+				container = document.getElementById('main_container');
+				(window.onhashchange = render)();
+			}
+
+			var render = function(){
+				container.innerHTML = '';
+				var hash = window.location.hash;
+				if(hash){
+					runDetailed(decodeURIComponent(hash.replace(/^#+/, '')));
+				} else runTests();
+			}
+
+			var getTestResult = function(str){
+				var resultStr = '', tokens, ex, tree;
+				try {
+					tokens = lang.tokenize(str);
+					tree = lang.aggregate(tokens);
+					for(var j in tokens) resultStr += (resultStr? ' ': '') +  tokens[j].toCode();
+				} catch(e){
+					resultStr = e.toString();
+					ex = e;
+				}
+				return {str: resultStr, tokens: tokens, exception: ex};
+			}
+
+			var runDetailed = function(str){
+				str = str === ' '? '': str;
+
+				var header = document.createElement('h3');
+				header.textContent = 'To big list';
+				header.style.fontSize = '20px';
+				header.onclick = function(){ 
+					textIndex = -1;
+					window.location.hash = ''; 
+				}
+				container.appendChild(header);
+
+				var textArea = document.createElement('textarea');
+				textArea.setAttribute('spellcheck', 'false');
+				textArea.value = str;
+				textArea.onkeyup = function(e){ 
+					textIndex = this.selectionStart;
+					window.location.hash = encodeURIComponent(this.value || ' '); 
+				}
+				container.appendChild(textArea);
+
+				textArea.focus();
+				if(textIndex >= 0) textArea.setSelectionRange(textIndex, textIndex);
+
+				var result = getTestResult(str);
+				var resultWrap = document.createElement('pre');
+				resultWrap.textContent = result.str;
+				container.appendChild(resultWrap);
+
+				var wrap = document.createElement('pre');
+				wrap.textContent = (result.tokens || []).join('\n');
+				container.appendChild(wrap);
+
+				if(result.exception) console.log(result.exception.stack);
+			}
+
+			var wrapperIsCollapsed = function(wrapper){ return wrapper.children[1].style.display === 'none'; }
+			var successCount = function(wrapper){ return parseInt(wrapper.getAttribute('success')); };
+			var totalCount = function(wrapper){ return parseInt(wrapper.getAttribute('total')) };
+
+			var getTestsWrapper = function(headerText, tests, level){
+				level = level || 1;
+				var innerContainer = document.createElement('div'),
+				 	header = document.createElement('h' + level),
+				 	wrapper = document.createElement('div'),
+				 	success = 0, total;
+
+				innerContainer.className = 'tests-container';
+				header.textContent = headerText;
+				header.onclick = function(){ innerContainer.style.display = wrapperIsCollapsed(wrapper)? 'block': 'none'; }
+
+				if(Array.isArray(tests)){
+					var table = document.createElement('table'),
+						tr, tda, tdb, tdc;
+
+					total = tests.length;
+
+					for(var i in tests){
+						tr = document.createElement('tr');
+						tda = document.createElement('td');
+						tdb = document.createElement('td')
+
+						var result = getTestResult(tests[i].source);
+						tda.textContent = tests[i].source;
+						tdb.textContent = result.str;
+						if(tests[i].tokens === result.str){
+							success++;
+							tr.className = 'success';
+						} else {
+							tr.className = 'fail';
+						}
+
+						tr.onclick = (function(){
+							var source = tests[i].source
+							return function(){ window.location.hash = source; }
+						})();
+
+						tr.appendChild(tda);
+						tr.appendChild(tdb);
+						table.appendChild(tr);
+					}
+
+					innerContainer.appendChild(table);
+				} else {
+					total = 0;
+					for(var i in tests){
+						var subWrapper = getTestsWrapper(i, tests[i], level + 1);
+						innerContainer.appendChild(subWrapper);
+						total += totalCount(subWrapper);
+						success += successCount(subWrapper);
+					} 
+				}
+
+				wrapper.appendChild(header);
+				wrapper.appendChild(innerContainer);
+
+				wrapper.setAttribute('success', success);
+				wrapper.setAttribute('total', total);
+
+				header.textContent += ' [' + success + '/' + total + ']';
+
+				if(success === total) header.onclick();
+
+				return wrapper;
+			};
+
+			var runTests = function(){ container.appendChild(getTestsWrapper('Total tests', tests)); }
+		</script>
+	</head>
+	<body onload="onload()" style="padding:50px">
+		<p id="main_container" style="width:100%"></p>
+	</body>
+</html>
