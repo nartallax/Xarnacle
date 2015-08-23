@@ -54,7 +54,7 @@
 		</style>
 		<script>
 
-			var container, textIndex = -1;
+			var container, textIndex = -1, lastException;
 
 			var onload = function(){
 				container = document.getElementById('main_container');
@@ -126,7 +126,11 @@
 				addBlock('Lexem tree', result.lexems);
 				addBlock('Result code', result.code || (result.exception? (result.exception.stack || result.exception): ''));
 
-				if(result.exception) console.log(result.exception.stack || result.exception);
+				if(result.exception) {
+					lastException = result.exception;
+					console.log(result.exception.stack || result.exception);
+				}
+				
 			}
 
 			var wrapperIsCollapsed = function(wrapper){ return wrapper.children[1].style.display === 'none'; }
