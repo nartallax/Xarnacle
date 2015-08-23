@@ -19,7 +19,8 @@ var lang = (function(){
 			inc: function(len){ return this.pos += (arguments.length > 0? len: 1), this; },
 			isSpace: function(c){ return this.spaces[c] },
 			defineCharacterGroup: function(name, group){ this.groups[name] = group; },
-			sequenceInGroup: function(g){ g = this.groups[g]; var r = ''; while(g.have(this.get())) r += this.gin(); return r;}
+			sequenceInGroup: function(g){ g = this.groups[g]; var r = ''; while(this.nend()&&g.have(this.get())) r += this.gin(); return r;},
+			sequenceNotInGroup: function(g){ g = this.groups[g]; var r = ''; while(this.nend()&&!g.have(this.get())) r+=this.gin();return r;}
 		}
 		
 		// abstract language exception
@@ -39,11 +40,9 @@ var lang = (function(){
 		AggregationException.prototype = new LanguageException();
 		AggregationException.prototype.toString = function(){ return 'AggregationException: ' + this.msg; }
 		
-		var invertArray = function(arr){
-			var result = {};
-			for(var i in arr) result[arr[i]] = true;
-			return result;
-		}
+		var CodeGenerationException = function(msg, lexem){ this.msg = msg, this.lexem = lexem }
+		CodeGenerationException.prototype = new LanguageException();
+		CodeGenerationException.prototype.toString = function(){ return 'CodeGenerationException: ' + this.msg }
 		
 		return {
 			Striter: Striter,
@@ -52,8 +51,21 @@ var lang = (function(){
 			DefinitionException: DefinitionException, 
 			TokenizationException: TokenizationException,
 			AggregationException: AggregationException,
+			CodeGenerationException: CodeGenerationException,
 			
-			invertArray: invertArray
+			escapeString: function(str){
+				return str
+					.replace('\\', '\\\\')
+					.replace('"', '\\"')
+					.replace("'", "\\'")
+					.replace('\n', '\\n')
+					.replace('\r', '\\r')
+					.replace('\b', '\\b')
+					.replace('\f', '\\f')
+					.replace('\O', '\\O')
+					.replace('\t', '\\t')
+					.replace('\v', '\\v');
+			}
 		};
 		
 	})();
@@ -89,46 +101,45 @@ var lang = (function(){
 			также токен/лексема может быть назначена абстрактной даже при наличии функции/последовательности, при необходимости
 				
 		*/
-		var compareByPriority = function(a, b){ return a.priority - b.priority }
+		var compareByPriority = function(a, b){ return b.priority - a.priority }
 
 		var Tokenizer = function(){ this.tokens = [], this.tokenPriorities = {}, this.charGroups = {}, this.postProcessors = []; }
-		Tokenizer.prototype.defineToken = function(token){
-			if(this.tokenPriorities[token.priority]) 
-				throw new util.DefinitionException("failed to define token with priority " + token.priority + ": already have token with such priority", token);
-			this.tokenPriorities[token.priority] = true;
-			this.tokens[token.priority] = token;
+		Tokenizer.prototype = {
+			defineToken:function(token){
+				if(token.isAbstract) return;
+				if(this.tokenPriorities[token.priority]) 
+					throw new util.DefinitionException("failed to define token with priority " + token.priority + ": already have token with such priority", token);
+				this.tokenPriorities[token.priority] = true;
+				this.tokens[token.priority] = token;
+			},
+			defineCharacterGroup:function(name, group){ this.charGroups[name] = group },
+			definePostProcessor:function(func, priority){ this.postProcessors.push({priority:priority || 0, func: func}); },
+			tokenize:function(str){
+				var parsed = [], iter = new util.Striter(str);
+				
+				for(i in this.charGroups) iter.defineCharacterGroup(i, this.charGroups[i]);
+				
+				this.tokens = this.tokens.sort(compareByPriority);
+				this.postProcessors = this.postProcessors.sort(compareByPriority);
+				
+				while(iter.nend()){
+					var next = this.nextToken(parsed, iter);
+					if(!next) throw new util.TokenizationException("could not parse token", iter.pos);
+					parsed.push(next);
+				}
+				
+				for(i in this.postProcessors) parsed = this.postProcessors[i].func.call(this, parsed);
+				
+				return parsed;
+			},
+			nextToken:function(parsed, iter){
+				for(var i in this.tokens){
+					var token = this.tokens[i].parse(iter, parsed);
+					if(token) return token;
+				}
+			}
 		};
-		Tokenizer.prototype.defineCharacterGroup = function(name, group){ this.charGroups[name] = group }
-		Tokenizer.prototype.definePostProcessor = function(func, priority){ this.postProcessors.push({priority:priority || 0, func: func}); };
-		Tokenizer.prototype.tokenize = function(str){
-			var parsed = [], iter = new util.Striter(str);
-			
-			for(i in this.charGroups) iter.defineCharacterGroup(i, this.charGroups[i]);
-			
-			this.tokens = this.tokens.sort(compareByPriority);
-			this.postProcessors = this.postProcessors.sort(compareByPriority);
-			
-			while(iter.nend()){
-				var next = this.nextToken(parsed, iter);
-				if(!next) throw new util.TokenizationException("could not parse token", iter.pos);
-				parsed.push(next);
-			}
-			
-			for(i in this.postProcessors) parsed = this.postProcessors[i].func.call(this, parsed);
-			
-			return parsed;
-		}
-		Tokenizer.prototype.nextToken = function(parsed, iter){
-			var iterPos = iter.pos;
-			for(var i in this.tokens){
-				var token = this.tokens[i];
-				if(token.isAbstract) continue;
-				token = token.parse(iter, parsed);
-				if(token) return token;
-				else iter.pos = iterPos; // reset after unsuccessful token parsing
-				// such reset may be needed also for parsed array, but it's too costly, so i'll just hope no one wants to modify it
-			}
-		}
+		
 		
 		var Token = function(){ 
 			/* properties: 
@@ -136,25 +147,30 @@ var lang = (function(){
 				instance: content
 			*/
 		}
+		Token.prototype.parse = function(iter){ 
+			throw new util.TokenizationException('could not parse token: no parsing function defined', iter.pos); 
+		}
 		
 		var Aggregator = function(){ this.lexems = [], this.lexemsByPriority = {} }
-		Aggregator.prototype.defineLexem = function(lexem){ 
-			this.lexems.push(lexem); 
-			if(!this.lexemsByPriority[lexem.priority]) this.lexemsByPriority[lexem.priority] = [];
-			this.lexemsByPriority[lexem.priority].push(lexem);
-		}
-		Aggregator.prototype.aggregate = function(tokens){
-			this.lexems = this.lexems.sort(compareByPriority);
-			var state = new State(tokens);
-			
-			while(true){
-				var lexem = state.findMatchingLexem(this.lexems);
-				console.log(lexem && lexem.getName());
-				if(!lexem) {
-					if(state.isMutatedCompletely()) return state.getMutationsResult();
-					else throw new util.AggregationException('could not find matching lexem', state);
+		Aggregator.prototype = {
+			defineLexem:function(lexem){ 
+				if(lexem.isAbstract) return;
+				this.lexems.push(lexem); 
+				if(!this.lexemsByPriority[lexem.priority]) this.lexemsByPriority[lexem.priority] = [];
+				this.lexemsByPriority[lexem.priority].push(lexem);
+			},
+			aggregate:function(tokens){
+				this.lexems = this.lexems.sort(compareByPriority);
+				var state = new State(tokens);
+				
+				while(true){
+					var lexem = state.findMatchingLexem(this.lexems);
+					if(!lexem) {
+						if(state.isMutatedCompletely()) return state.getMutationsResult();
+						else throw new util.AggregationException('could not find matching lexem', state);
+					}
+					state.mutate(this.lexemsByPriority[lexem.priority]);
 				}
-				state.mutate(this.lexemsByPriority[lexem.priority]);
 			}
 		}
 		
@@ -185,8 +201,7 @@ var lang = (function(){
 					content.push(this.next.val);
 					this.next = this.next.next;
 				}
-				this.val = new lexem();
-				this.val.content = content;
+				this.val = new lexem(content);
 			},
 			mutateMultiple: function(lexems){
 				var lexem;
@@ -201,26 +216,41 @@ var lang = (function(){
 			
 			this.first = el = new StateElement(tokens[0]);
 			while(++i < l){
-				newEl = new StateElement(tokens[0]);
+				newEl = new StateElement(tokens[i]);
 				el.next = newEl;
 				el = newEl;
 			}
 		}
 		State.prototype = {
-			findMatchingLexem: function(lexems){ for(var i in lexems) if(!lexems[i].isAbstract && this.haveMatch(lexems[i])) return lexems[i]; },
+			findMatchingLexem: function(lexems){ 
+				for(var i in lexems)
+					if(this.haveMatch(lexems[i])) 
+						return lexems[i]; 
+			},
 			haveMatch: function(lexem){ return this.first.haveMatchInChain(lexem); },
 			mutate: function(lexems){ this.first.mutateMultiple(lexems); },
-			isMutatedCompletely: function(){ return this.first && !this.first.next && this.first.value instanceof Lexem },
-			getMutationsResult: function(){ return this.first.value; }
+			isMutatedCompletely: function(){
+				return this.first && !this.first.next && this.first.val instanceof Lexem 
+			},
+			getMutationsResult: function(){ return this.first.val; },
+			toString: function(){
+				var el = this.first, result = [];
+				while(el){
+					result.push(el.val + '');
+					el = el.next;
+				}
+				return result.join(' ');
+			}
 		}
 		
 		
 		var Lexem = function(){
 			/* properties:
-				definition: pattern (sequence of token/lexem defintions), priority
+				definition: pattern (sequence of token/lexem defintions), priority, toCode
 				instance: content (sequence of token/lexem instances)
 			*/
 		}
+		Lexem.prototype.toCode = function(){ throw new util.CodeGenerationException('could not generate code from lexem: have no code generation function', this); }
 		
 		var CharacterGroup = function(characters){
 			this.chars = {}, this.linked = [];
@@ -268,8 +298,8 @@ var lang = (function(){
 	
 	var definition = (function(){ // language token and lexem definitions
 	
-		var tokens = {};
-		var lexems = {};
+		var tokens = {}, lexems = {},
+			t = tokens, l = lexems; // just to keep code short
 		
 		// функция для определения нового токена
 		var token = function(parent, name, priority, parse, isAbstract){
@@ -278,20 +308,25 @@ var lang = (function(){
 			var token = function(content){ this.content = content; };
 			token.prototype = new parent();
 			
-			token.prototype.toString = token.toString = function(){ return name + (this instanceof token? '(' + this.content + ')': '') }
+			token.prototype.toString = token.toString = function(tabs){ 
+				return (tabs || '') + (this instanceof token?
+					'ti:' + name + '(' + this.content + ')':
+					'td:' + name);
+			}
 			token.prototype.priority = token.priority = priority;
 			token.prototype.isAbstract = token.isAbstract = typeof(isAbstract) === 'boolean'? isAbstract: parse? false: true;
 			token.prototype.getName = token.getName = function(){ return name };
 			token.prototype.parent = token.parent = parent;
-			if(parse){
-				token.prototype.parse = token.parse = function(iter, parsed){
-					var content = parse.call(token, iter, parsed);
-					return content === undefined? null: new token(content);
-				};
-			}
+			token.prototype.parse = token.parse = parse? function(iter, parsed){
+					var content = parse.call(this || token, iter, parsed);
+					return content === undefined? null: new (this || token)(content);
+				} : function(iter, parsed){ 
+					var firstParseableParent = parent;
+					while(!firstParseableParent.parse) firstParseableParent = firstParseableParent.parent;
+					return firstParseableParent.parse.call(this, iter, parsed); 
+				}
 			
 			return tokens[name] = token;
-			
 		};
 		
 		var generatePriorityForKey = (function(){
@@ -323,41 +358,84 @@ var lang = (function(){
 		// функция для определения нового ключевого слова / ключевой последовательности символов (оператора или чего-то в этом роде)
 		var key = function(name, word){
 			var key = token('Key', name, generatePriorityForKey(word), null, false);
-			key.sequence = word;
+			key.prototype.sequence = key.sequence = word;
 			return key;
 		}
 		
-		var lexem = function(parent, name, priority, pattern, isAbstract){
+		var lexem = function(parent, name, priority, patternWithNames, toCode, isAbstract){
 			
-			if(!Array.isArray(pattern) || !pattern || pattern.length === 0) pattern = undefined;
+			var pattern = [], argNames = [];
+			if(!Array.isArray(patternWithNames) || !patternWithNames || patternWithNames.length === 0) 
+				pattern = undefined, argNames = undefined;
+			else 
+				for(var i in patternWithNames) {
+					var count = 0;
+					for(var j in patternWithNames[i]){
+						pattern.push(patternWithNames[i][j]);
+						argNames.push(j);
+						count ++;
+					}
+					if(count !== 1) throw new util.DefinitionException('failed to register ' + name + ' lexem: every single part of pattern must be object with exactly one key-value pair');
+				}
 			
 			parent = parent? lexems[parent]: ast.Lexem;
-			var lexem = function(content){ this.content = content; };
+			var lexem = function(content){ 
+				this.content = content; 
+				for(var i in this.argNames) this[argNames[i]] = content[i];
+			};
 			lexem.prototype = new parent();
 			
-			lexem.prototype.toString = lexem.toString = function(){ return name + (this instanceof lexem? '(' + this.content.join(',') + ')': '') }
+			lexem.prototype.toString = lexem.toString = function(tabs){ 
+				tabs = tabs || '';
+				if(!(this instanceof lexem)) return tabs + 'ld:' + name;
+				var result = tabs + 'li:' + name + '(';
+				switch(this.content.length){
+					case 0: return result + ')';
+					case 1: return result + this.content[0].toString('') + ')';
+					default:
+						var newTabs = tabs + '\t';
+						result += '\n';
+						for(var i in this.content) result += this.content[i].toString(newTabs) + '\n';
+						result += tabs + ')';
+						return result;
+				}
+			}
 			lexem.prototype.priority = lexem.priority = priority;
 			lexem.prototype.isAbstract = lexem.isAbstract = typeof(isAbstract) === 'boolean'? isAbstract: pattern? false: true;
 			lexem.prototype.getName = lexem.getName = function(){ return name};
 			lexem.prototype.parent = lexem.parent = parent;
 			lexem.prototype.pattern = lexem.pattern = pattern;
+			lexem.prototype.argNames = lexem.argNames = argNames;
 			if(pattern && pattern.length < 1) throw new util.DefinitionException('failed to register ' + name + ' lexem: pattern must be at least 1 element long');
+			if(toCode) lexem.prototype.toCode = lexem.toCode = toCode;
 			
 			return lexems[name] = lexem;
 		}
 		
-		token(null, 'Space', 0xffffffff, function(iter){ 
+		token(null, 'TrashToken');
+		token('TrashToken', 'Space', 0x80000000, function(iter){ return iter.sequenceInGroup('space') || undefined; });
+		token('TrashToken', 'Comment');
+		token('Comment', 'OneLineComment', 0x80000001, function(iter){
+			if(!iter.have('//')) return;
+			iter.inc(2);
+			return iter.sequenceNotInGroup('newline');
+		});
+		token('Comment', 'MultiLineComment', 0x80000002, function(iter){
+			if(!iter.have('/*')) return;
+			iter.inc(2);
 			var result = '';
-			while(iter.charIn('space')) result += iter.gin();
+			while(iter.nend() && !iter.have('*/')) result += iter.gin();
+			if(iter.end()) throw new util.TokenizationException('multiline comment have no end', iter.pos);
+			iter.inc(2);
 			return result;
-		}); // последовательность пробельных символов
+		});
 		token(null, 'Key', null, function(iter){
 			return iter.have(this.sequence) && (!isIdentifier(this.sequence) || !identfierChars.have(iter.get(this.sequence.length)))? 
-						(iter.inc(this.sequence), this.sequence):
-						null;
+						(iter.inc(this.sequence.length), this.sequence):
+						undefined;
 		}, true); // некая константная последовательность символов
 		token(null, 'Identifier', 9000, function(iter){ 
-			if(!iter.charIn('identiferStart')) return;
+			if(!iter.charIn('identifierStart')) return;
 			var result = '';
 			while(iter.charIn('identifier')) result += iter.gin();
 			return result;
@@ -378,6 +456,8 @@ var lang = (function(){
 						case 't': result += '\t'; continue;
 						case 'b': result += '\b'; continue;
 						case 'f': result += '\f'; continue;
+						case 'O': result += '\O'; continue;
+						case 'v': result += '\v'; continue;
 						default: result += char; continue;
 					} 
 				}
@@ -394,17 +474,17 @@ var lang = (function(){
 		});
 		token('Literal', 'Number', 8001, (function(){
 			
-			var zero = '0'.charCodeAt(0), a = 'a'.charCodeAt(0);
+			var zero = '0'.charCodeAt(0), a = 'a'.charCodeAt(0) - 10;
 			
 			var intOf = function(str, mult){
 				var l = str.length, i, res = 0, c;
-				for(i = 0; i < l; i++) c = str.charAt(i), res = (res * mult) + (c.charCodeAt(0) - (digits.have(c)? zero: a));
+				for(i = 0; i < l; i++) res = (res * mult) + (str.charCodeAt(i) - (digits.have(str.charAt(i))? zero: a));
 				return res;
 			}
 			
 			var fractOf = function(str){
-				var l = str.length, i, res = 0, c, div = 1;
-				for(i = 0; i < l; i++) c = str.charCodeAt(i), div *= 10, res += (c - zero) / div;
+				var l = str.length, i, res = 0, div = 1;
+				for(i = 0; i < l; i++) div *= 10, res += (str.charCodeAt(i) - zero) / div;
 				return res;
 			}
 			
@@ -415,18 +495,54 @@ var lang = (function(){
 				var result = 0, startPart = iter.sequenceInGroup('digits');
 				
 				if(char === '0'){
-					if(startPart.length === 1 && iter.get() === 'x') 		return intOf(iter.sequenceInGroup('hexDigits'), 16);
-					else if(startPart.length === 1 && iter.get() === 'b')	return intOf(iter.sequenceInGroup('binDigits'), 2);
-					else if(octDigits.isMakingUp(startPart))				return intOf(startPart, 8);
-					else if(iter.get() !== '.')								return intOf(startPart, 10);
-					else return iter.inc(), intOf(startPart, 10) + fractOf(iter.sequenceInGroup('digits'));
-				} else return intOf(startPart, 10) + (iter.get() === '.')? (iter.inc(), fractOf(iter.sequenceInGroup('digits'))): 0;
+					if(startPart.length === 1){
+						switch(iter.get()){
+							case 'x': return iter.inc(), intOf(iter.sequenceInGroup('hexDigits'), 16);
+							case 'b': return iter.inc(), intOf(iter.sequenceInGroup('binDigits'), 2);
+							case '.': return iter.inc(), intOf(startPart, 10) + fractOf(iter.sequenceInGroup('digits'));
+							default: return 0;
+						}
+					}
+					if(octDigits.isMakingUp(startPart)) return intOf(startPart, 8);
+				}
+				return intOf(startPart, 10) + ((iter.get() === '.')? (iter.inc(), fractOf(iter.sequenceInGroup('digits'))): 0);
 			}
 		})());
-	
-		lexem(null, 'Literal');
-		lexem('Literal', 'Number', 8001, [tokens.Number]);
-	
+		
+		key('Plus', '+');
+		key('Minus', '-');
+		key('Asterisk', '*');
+		key('Slash', '/');
+		key('DoublePlus', '++');
+		key('DoubleMinus', '--');
+		
+		lexem(null, 'Expression');
+		lexem('Expression', 'Literal');
+		lexem('Literal', 'String', 8000, [{value:t.String}], function(){ 
+			return '"' + util.escapeString(this.value.content.toString()) + '"'; 
+		});
+		lexem('Literal', 'Number', 8001, [{value:t.Number}], function(){ return this.value.content.toString(); });
+		
+		lexem('Expression', 'Identifier', 7999, [{value:t.Identifier}], function(){ return this.value.content.toString(); })
+		
+		var typicalBinOpCodeGen = function(){ return '(' + this.left.toCode() + this.sign.content + this.right.toCode() + ')'; },
+			typicalPrefixOpCodeGen = function(){ return '(' + this.sign.content + this.operand.toCode() + ')' },
+			typicalPostfixOpCodeGen = function(){ return '(' + this.operand.toCode() + this.sign.content + ')' };
+		
+		lexem('Expression', 'Operator');
+		lexem('Operator', 'BinaryOperator', null, null, typicalBinOpCodeGen);
+		lexem('Operator', 'UnaryOperator');
+		lexem('UnaryOperator', 'PrefixUnaryOperator', null, null, typicalPrefixOpCodeGen);
+		lexem('UnaryOperator', 'PostfixUnaryOperator', null, null, typicalPostfixOpCodeGen);
+		lexem('BinaryOperator', 'Addition', 500, [{left:l.Expression}, {sign:t.Plus}, {right:l.Expression}]);
+		lexem('BinaryOperator', 'Subtraction', 500, [{left:l.Expression}, {sign:t.Minus}, {right:l.Expression}]);
+		lexem('BinaryOperator', 'Multiplication', 550, [{left:l.Expression}, {sign:t.Asterisk}, {right:l.Expression}]);
+		lexem('BinaryOperator', 'Division', 550, [{left:l.Expression}, {sign:t.Slash}, {right:l.Expression}]);
+		lexem('PrefixUnaryOperator', 'PrefixIncrement', 600, [{sign:t.DoublePlus}, {operand:l.Identifier}]);
+		lexem('PrefixUnaryOperator', 'PrefixDecrement', 600, [{sign:t.DoubleMinus}, {operand:l.Identifier}]);
+		lexem('PostfixUnaryOperator', 'PostfixIncrement', 650, [{operand:l.Identifier}, {sign:t.DoublePlus}]);
+		lexem('PostfixUnaryOperator', 'PostfixDecrement', 650, [{operand:l.Identifier}, {sign:t.DoubleMinus}]);
+		
 		var binDigits = new ast.CharacterGroup('0','1'),
 			octDigits = new ast.CharacterGroup(binDigits,'2','3','4','5','6','7'),
 			digits = new ast.CharacterGroup(octDigits, '8', '9'),
@@ -451,10 +567,10 @@ var lang = (function(){
 		
 		var isIdentifier = function(str){ return str.length > 0 && identifierStartChars.have(str.charAt(0)) && identifierChars.isMakingUp(str) }
 		
-		var removeSpaceTokenPostProcessor = function(t){
+		var removeTrashTokensPostProcessor = function(t){
 			var result = [];
 			for(var i in t)
-				if(!(t[i] instanceof tokens.Space))
+				if(!(t[i] instanceof tokens.TrashToken))
 					result.push(t[i]);
 			return result;
 		}
@@ -475,7 +591,7 @@ var lang = (function(){
 			},
 			
 			tokenizerPostProcessors: {
-				'100': removeSpaceTokenPostProcessor
+				'100': removeTrashTokensPostProcessor
 			},
 			
 			defineToken: token

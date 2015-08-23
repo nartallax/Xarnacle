@@ -14,12 +14,15 @@
 				margin-left: 15px;
 			}
 
+			div, td, h1, h2, h3, h4, h5, h6{
+				font-family: 'Arial';
+			}
+			
 			p, table { width: 100%; }
 
 			h1, h2, h3, h4, h5, h6 {
 				cursor: pointer;
 				text-decoration: underline;
-				font-family: 'Arial';
 
 				color: #303030;
 			}
@@ -28,7 +31,6 @@
 			td { 
 				width: 50%; 
 				white-space: pre;
-				font-family: 'Arial';
 			}
 
 			tr { 
@@ -68,19 +70,33 @@
 			}
 
 			var getTestResult = function(str){
-				var resultStr = '', tokens, ex, tree;
+				var tokens, ex, tree, code;
 				try {
-					tokens = lang.tokenize(str);
-					tree = lang.aggregate(tokens);
-					for(var j in tokens) resultStr += (resultStr? ' ': '') +  tokens[j].toCode();
+					var tokensArr = lang.tokenize(str)
+					tokens = tokensArr.join('\n');
+					tree = lang.aggregate(tokensArr);
+					code = tree.toCode();
 				} catch(e){
-					resultStr = e.toString();
 					ex = e;
 				}
-				return {str: resultStr, tokens: tokens, exception: ex};
+				return {lexems: tree, tokens: tokens, exception: ex, code: code};
 			}
 
 			var runDetailed = function(str){
+			
+				var addBlock = function(name, content){
+					var header = document.createElement('div'),
+						wrap = document.createElement('div'),
+						body = document.createElement('pre');
+					header.textContent = name;
+					header.style.marginTop = '15px';
+					header.style.fontWeight = 'bold';
+					body.textContent = content;
+					wrap.appendChild(header);
+					wrap.appendChild(body);
+					container.appendChild(wrap);
+				}
+			
 				str = str === ' '? '': str;
 
 				var header = document.createElement('h3');
@@ -105,15 +121,12 @@
 				if(textIndex >= 0) textArea.setSelectionRange(textIndex, textIndex);
 
 				var result = getTestResult(str);
-				var resultWrap = document.createElement('pre');
-				resultWrap.textContent = result.str;
-				container.appendChild(resultWrap);
+				
+				addBlock('Tokens', result.tokens);
+				addBlock('Lexem tree', result.lexems);
+				addBlock('Result code', result.code || (result.exception? (result.exception.stack || result.exception): ''));
 
-				var wrap = document.createElement('pre');
-				wrap.textContent = (result.tokens || []).join('\n');
-				container.appendChild(wrap);
-
-				if(result.exception) console.log(result.exception.stack);
+				if(result.exception) console.log(result.exception.stack || result.exception);
 			}
 
 			var wrapperIsCollapsed = function(wrapper){ return wrapper.children[1].style.display === 'none'; }
@@ -144,8 +157,8 @@
 
 						var result = getTestResult(tests[i].source);
 						tda.textContent = tests[i].source;
-						tdb.textContent = result.str;
-						if(tests[i].tokens === result.str){
+						tdb.textContent = result.code;
+						if(tests[i].result === result.code){
 							success++;
 							tr.className = 'success';
 						} else {
@@ -170,7 +183,7 @@
 						innerContainer.appendChild(subWrapper);
 						total += totalCount(subWrapper);
 						success += successCount(subWrapper);
-					} 
+					}
 				}
 
 				wrapper.appendChild(header);
