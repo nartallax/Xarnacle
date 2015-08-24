@@ -73,6 +73,8 @@ var tests = {
 			{source: "2 * 2 + 2", result: '((2*2)+2)'},
 			{source: "1 + - 2", result: '(1+(-2))'},
 			{source: "1 - + 2", result: '(1-(+2))'},
+			{source: "- 1 + - 2", result: '((-1)+(-2))'},
+			{source: "+ 1 - + 2", result: '((+1)-(+2))'},
 			{source: "2 + 2 * 2", result: '(2+(2*2))'},
 			{source: "2 * 2 + 2 * 2", result: '((2*2)+(2*2))'},
 			{source: "2 + 3 - 1", result: '((2+3)-1)'},

@@ -51,21 +51,7 @@ var lang = (function(){
 			DefinitionException: DefinitionException, 
 			TokenizationException: TokenizationException,
 			AggregationException: AggregationException,
-			CodeGenerationException: CodeGenerationException,
-			
-			escapeString: function(str){
-				return str
-					.replace('\\', '\\\\')
-					.replace('"', '\\"')
-					.replace("'", "\\'")
-					.replace('\n', '\\n')
-					.replace('\r', '\\r')
-					.replace('\b', '\\b')
-					.replace('\f', '\\f')
-					.replace('\O', '\\O')
-					.replace('\t', '\\t')
-					.replace('\v', '\\v');
-			}
+			CodeGenerationException: CodeGenerationException
 		};
 		
 	})();
@@ -596,12 +582,33 @@ var lang = (function(){
 		key('LeftBrace', '{');
 		key('RightBrace', '}');
 		
+		key('True', 'true');
+		key('False', 'false');
+		key('Undefined', 'undefined');
+		key('Null', 'null');
+		
 		lexem(null, 'Expression');
 		lexem('Expression', 'Literal');
 		lexem('Literal', 'String', 8000, [{value:t.String}], function(){ 
-			return '"' + util.escapeString(this.value.content.toString()) + '"'; 
+			return '"' + this.value.content.toString()
+					.replace('\\', '\\\\')
+					.replace('"', '\\"')
+					.replace("'", "\\'")
+					.replace('\n', '\\n')
+					.replace('\r', '\\r')
+					.replace('\b', '\\b')
+					.replace('\f', '\\f')
+					.replace('\O', '\\O')
+					.replace('\t', '\\t')
+					.replace('\v', '\\v')
+					+ '"'; 
 		});
-		lexem('Literal', 'Number', 8001, [{value:t.Number}], function(){ return this.value.content.toString(); });
+		lexem('Literal', 'Number', 8000, [{value:t.Number}], function(){ return this.value.content.toString(); });
+		lexem('Literal', 'Boolean');
+		lexem('Boolean', 'True', 8000, [{value:t.True}], function(){ return 'true' });
+		lexem('Boolean', 'False', 8000, [{value:t.False}], function(){ return 'false' });
+		lexem('Literal', 'Undefined', 8000, [{value:t.Undefined}], function(){ return 'undefined' });
+		lexem('Literal', 'Null', 8000, [{value:t.Null}], function(){ return 'null' });
 		
 		lexem('Expression', 'Identifier');
 		lexem('Identifier', 'SingleIdentifier', 7999, [{value:t.Identifier}], function(){ return this.value.content.toString(); })
@@ -759,21 +766,27 @@ var lang = (function(){
 		util: util,
 		definition: definition,
 		
-		tokenize: function(str){
+		getTokenizer: function(){
 			var tokenizer = new this.ast.Tokenizer(), i;
 			for(i in this.definition.tokens) tokenizer.defineToken(this.definition.tokens[i]);
 			for(i in this.definition.charGroups) tokenizer.defineCharacterGroup(i, this.definition.charGroups[i]);
 			for(i in this.definition.tokenizerPostProcessors) tokenizer.definePostProcessor(this.definition.tokenizerPostProcessors[i], parseInt(i));
-			return tokenizer.tokenize(str);
+			return tokenizer;
 		},
 		
-		aggregate: function(tokens){
+		getAggregator: function(){
 			var aggregator = new this.ast.Aggregator(), i;
 			for(i in this.definition.lexems) aggregator.defineLexem(this.definition.lexems[i]);
-			return aggregator.aggregate(tokens);
+			return aggregator;
 		},
 		
-		treeOf: function(str){ return this.aggregate(this.tokenize(str)); }
+		tokenize: function(str, tokenizer, aggregator){ return (tokenizer || this.getTokenizer()).tokenize(str, aggregator || this.getAggregator()); },
+		aggregate: function(tokens, aggregator){ return (aggregator || this.getAggregator()).aggregate(tokens); },
+		
+		treeOf: function(str){ 
+			var t = this.getTokenizer(), a = this.getAggregator();
+			return this.aggregate(this.tokenize(str, t, a), a); 
+		}
 	}
 	
 })();
