@@ -135,9 +135,15 @@ var lang = (function(){
 				instance: content
 			*/
 		}
-		Token.prototype.parse = function(iter){ 
-			throw new util.TokenizationException('could not parse token: no parsing function defined', iter.pos); 
+		Token.prototype = {
+			parse: function(iter){ 
+				throw new util.TokenizationException('could not parse token: no parsing function defined', iter.pos); 
+			},
+			toString: function(){ return 't:' + this.getName() + '(' + this.content + ')'; },
+			getName: function(){ return this.constructor.getName(); }
 		}
+		Token.getName = function(){ return this.tokenName || this.prototype.getName(); }
+		Token.toString = function(){ return 't:' + this.getName(); }
 		
 		var Aggregator = function(tokenizer){ this.lexems = [], this.lexemsByPriority = {}, this.tokenizer = tokenizer }
 		Aggregator.prototype = {
@@ -573,75 +579,45 @@ var lang = (function(){
 			}
 		})());
 		
-		key('Plus', '+');
-		key('Minus', '-');
-		key('Asterisk', '*');
-		key('Slash', '/');
-		key('Percent', '%');
-		key('Tilde', '~');
-		key('Ampersand', '&');
-		key('Obelisk', '|');
-		key('Circumflex', '^');
-		key('Comma', ',');
-		key('Point', '.');
-		key('Question', '?');
-		key('Colon', ':');
-		
-		key('Equals', '=');
-		key('PlusEquals', '+=');
-		key('MinusEquals', '-=');
-		key('DoubleAsteriskEquals', '**=');
-		key('AsteriskEquals', '*=');
-		key('SlashEquals', '/=');
-		key('PercentEquals', '%=');
-		key('DoubleLesserEquals', '<<=');
-		key('DoubleGreaterEquals', '>>=');
-		key('TripleGreaterEquals', '>>>=');
-		key('AmpersandEquals', '&=');
-		key('CircumflexEquals', '^=');
-		key('ObeliskEquals', '|=');
-		
-		key('Exclamation', '!');
-		key('Greater', '>');
-		key('Lesser', '<');
-		key('LesserOrEquals', '<=');
-		key('GreaterOrEquals', '>=');
-		
-		key('Typeof', 'typeof');
-		key('Delete', 'delete');
-		key('In', 'in');
-		key('Instanceof', 'instanceof');
-		
-		key('DoubleAsterisk', '**');
-		key('DoublePlus', '++');
-		key('DoubleMinus', '--');
-		key('DoubleAmpersand', '&&');
-		key('DoubleObelisk', '||');
-		key('DoubleGreater', '>>');
-		key('TripleGreater', '>>>');
-		key('DoubleLesser', '<<');
-		
-		key('DoubleEquals', '==');
-		key('TripleEquals', '===');
-		key('ExclamationEquals', '!=');
-		key('ExclamationDoubleEquals', '!==');
-		
-		key('LeftParenthesis', '(');
-		key('RightParenthesis', ')');
-		key('LeftBracket', '[');
-		key('RightBracket', ']');
-		key('LeftBrace', '{');
-		key('RightBrace', '}');
-		
-		key('True', 'true');
-		key('False', 'false');
-		key('Undefined', 'undefined');
-		key('Null', 'null');
+		var keys = {
+			Plus: '+', Minus: '-', Asterisk: '*', Slash: '/', Percent: '%',
+			Tilde: '~', Ampersand: '&', Obelisk: '|', Circumflex: '^',
+			Comma: ',', Point: '.', Question: '?', Colon: ':', Semicolon: ';',
+			
+			Equals: '=', 
+			PlusEquals: '+=', MinusEquals: '-=', AsteriskEquals: '*=', SlashEquals: '/=', PercentEquals: '%=',
+			AmpersandEquals: '&=', ObeliskEquals: '|=', CircumflexEquals: '^=',
+			DoubleLesserEquals: '<<=', DoubleGreaterEquals: '>>=', TripleGreaterEquals: '>>>=',
+			DoubleAsteriskEquals: '**=', 
+			
+			Exclamation: '!', Greater: '>', Lesser: '<', LesserOrEquals: '<=', GreaterOrEquals: '>=',
+			
+			DoubleAsterisk: '**',
+			DoubleLesser: '<<', DoubleGreater: '>>', TripleGreater: '>>>',
+			DoubleMinus: '--', DoublePlus: '++',
+			DoubleAmpersand: '&&', DoubleObelisk: '||',
+			
+			DoubleEquals: '==', TripleEquals: '===',
+			ExclamationEquals: '!=', ExclamationDoubleEquals: '!==',
+			
+			LeftParenthesis: '(', RightParenthesis: ')',
+			LeftBracket: '[', RightBracket: ']',
+			LeftBrace: '{', RightBrace: '}',
+			
+			True: 'true', False: 'false',
+			Undefined: 'undefined', Null: 'null',
+			
+			Typeof: 'typeof',
+			Delete: 'delete',
+			In: 'in',
+			Instanceof: 'instanceof'
+		};
+		for(var keyName in keys) key(keyName, keys[keyName]);
 		
 		lexem(null, 'Expression');
 		lexem('Expression', 'Literal');
 		lexem('Literal', 'String', 8000, [{value:t.String}], function(){ 
-			return '"' + this.value.content.toString()
+			return '"' + this.value.content
 					.replace('\\', '\\\\')
 					.replace('"', '\\"')
 					.replace("'", "\\'")
@@ -669,7 +645,7 @@ var lang = (function(){
 		});
 		lexem('IdentifierChain', 'KeyWordIdentifierChain', 900, [{left:l.Expression}, {sign:t.Point}, {right:t.KeyWord}], function(){
 			return this.left.toCode() + '.' + this.right.content;
-		}, false, 0, function(el){ return el.next && el.next.next && isIdentifier(el.next.next.val.content); });
+		});
 		
 		var typicalBinOpCodeGen = function(){ return '(' + this.left.toCode() + this.sign.content + this.right.toCode() + ')'; },
 			typicalTernOpCodeGen = function(){ return '(' + 
