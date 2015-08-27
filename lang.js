@@ -98,6 +98,7 @@ var lang = (function(){
 				this.tokenPriorities[token.priority] = true;
 				this.tokens[token.priority] = token;
 			},
+			getTokens: function(){ return this.tokens },
 			defineCharacterGroup:function(name, group){ this.charGroups[name] = group },
 			definePostProcessor:function(func, priority){ this.postProcessors.push({priority:priority || 0, func: func}); },
 			tokenize:function(str){
@@ -137,7 +138,7 @@ var lang = (function(){
 			throw new util.TokenizationException('could not parse token: no parsing function defined', iter.pos); 
 		}
 		
-		var Aggregator = function(){ this.lexems = [], this.lexemsByPriority = {} }
+		var Aggregator = function(tokenizer){ this.lexems = [], this.lexemsByPriority = {}, this.tokenizer = tokenizer }
 		Aggregator.prototype = {
 			defineLexem:function(lexem){ 
 				if(lexem.isAbstract) return;
@@ -145,9 +146,10 @@ var lang = (function(){
 				if(!this.lexemsByPriority[lexem.priority]) this.lexemsByPriority[lexem.priority] = [];
 				this.lexemsByPriority[lexem.priority].push(lexem);
 			},
+			getLexems: function(){ return this.lexems; },
 			aggregate:function(tokens){
 				this.lexems = this.lexems.sort(compareByPriority);
-				var state = new State(tokens);
+				var state = new State(tokens, this.tokenizer, this);
 				
 				while(true){
 					var lexem = state.findMatchingLexem(this.lexems);
@@ -160,16 +162,16 @@ var lang = (function(){
 			}
 		}
 		
-		var StateElement = function(val){ this.val = val; }
+		var StateElement = function(val, tokenizer, aggregator){ this.val = val, this.tokenizer = tokenizer, this.aggregator = aggregator }
 		StateElement.prototype = {
 			matches: function(lexem, pos){
-				return this.val instanceof lexem.pattern[pos]? 
+				return !(this.val instanceof lexem.pattern[pos] && (pos !== 0 || !lexem.condition || lexem.condition(this)))? 
+							false:
 							pos === lexem.pattern.length - 1? 
 								true:
 								this.next?
 									this.next.matches(lexem, pos + 1):
-									false:
-							false;
+									false;
 			},
 			findMatchingIn: function(lexems){
 				for(var i in lexems) if(this.matches(lexems[i], 0)) return lexems[i];
@@ -210,6 +212,7 @@ var lang = (function(){
 					content.push(this.next.val);
 					this.next = this.next.next;
 				}
+				if(this.next) this.next.prev = this;
 				this.val = new lexem(content);
 			},
 			mutateMultiple: function(lexems){
@@ -222,14 +225,16 @@ var lang = (function(){
 			}
 		}
 		
-		var State = function(tokens){
+		var State = function(tokens, tokenizer, aggregator){
+			this.tokenizer = tokenizer, this.aggregator = aggregator;
 			var i = 0, l = tokens.length, el, newEl;
 			if(l === 0) return;
 			
-			this.first = el = new StateElement(tokens[0]);
+			this.first = el = new StateElement(tokens[0], tokenizer, aggregator);
 			while(++i < l){
-				newEl = new StateElement(tokens[i]);
+				newEl = new StateElement(tokens[i], tokenizer, aggregator);
 				el.next = newEl;
+				newEl.prev = el;
 				el = newEl;
 			}
 		}
@@ -258,7 +263,7 @@ var lang = (function(){
 		
 		var Lexem = function(){
 			/* properties:
-				definition: pattern (sequence of token/lexem defintions), priority, toCode
+				definition: pattern (sequence of token/lexem defintions), priority, toCode, condition
 				instance: content (sequence of token/lexem instances)
 			*/
 		}
@@ -374,7 +379,7 @@ var lang = (function(){
 			return key;
 		}
 		
-		var lexem = function(parent, name, priority, patternWithNames, toCode, isAbstract, reverseLookaheadLength){
+		var lexem = function(parent, name, priority, patternWithNames, toCode, isAbstract, reverseLookaheadLength, condition){
 			
 			var pattern = [], argNames = [];
 			if(!Array.isArray(patternWithNames) || !patternWithNames || patternWithNames.length === 0) 
@@ -412,6 +417,7 @@ var lang = (function(){
 						return result;
 				}
 			}
+			
 			lexem.prototype.reverseLookaheadLength = lexem.reverseLookaheadLength = reverseLookaheadLength || 0;
 			lexem.prototype.priority = lexem.priority = priority;
 			lexem.prototype.isAbstract = lexem.isAbstract = typeof(isAbstract) === 'boolean'? isAbstract: pattern? false: true;
@@ -421,8 +427,40 @@ var lang = (function(){
 			lexem.prototype.argNames = lexem.argNames = argNames;
 			if(pattern && pattern.length < 1) throw new util.DefinitionException('failed to register ' + name + ' lexem: pattern must be at least 1 element long');
 			if(toCode) lexem.prototype.toCode = lexem.toCode = toCode;
+			if(condition) lexem.prototype.condition = lexem.condition = condition;
 			
 			return lexems[name] = lexem;
+		}
+		
+		var lexemsEndingWith = function(lexems, token){
+			var result = [];
+			for(var i in lexems){
+				var lexem =	lexems[i];
+				if(!lexem.isAbstract && (token instanceof lexem.pattern[lexem.pattern.length - 1]))
+					result.push(lexem);
+			}
+			return result;
+		}
+		var allLexemsHaveHigherOrEqualPriorityThan = function(lexems, priority){
+			for(var i in lexems)
+				if(lexems[i].priority < priority)
+					return false;
+			return true;
+		}
+		var duplicateUnaryOperatorAggregationCondition = function(priority){
+			return function(el){
+				
+				return !el.prev || (
+							el.prev.val instanceof ast.Token && 
+							allLexemsHaveHigherOrEqualPriorityThan(
+								lexemsEndingWith(
+									el.aggregator.getLexems(), 
+									el.prev
+								), 
+								priority
+							)
+						)
+			};
 		}
 		
 		token(null, 'TrashToken');
@@ -695,8 +733,8 @@ var lang = (function(){
 			function(){ return '(typeof(' + this.operand.toCode() + '))'});
 		lexem('PrefixUnaryOperator', 'Delete', 800, [{sign:t.Delete}, {operand:l.Identifier}], 
 			function(){ return '(delete ' + this.operand.toCode() + ')' });
-		lexem('PrefixUnaryOperator', 'UnaryMinus', 800, [{sign:t.Minus}, {operand:l.Expression}]);
-		lexem('PrefixUnaryOperator', 'UnaryPlus', 800, [{sign:t.Plus}, {operand:l.Expression}]);
+		lexem('PrefixUnaryOperator', 'UnaryMinus', 800, [{sign:t.Minus}, {operand:l.Expression}], null, false, 0, duplicateUnaryOperatorAggregationCondition(800));
+		lexem('PrefixUnaryOperator', 'UnaryPlus', 800, [{sign:t.Plus}, {operand:l.Expression}], null, false, 0, duplicateUnaryOperatorAggregationCondition(800));
 		
 		lexem('PostfixUnaryOperator', 'PostfixIncrement', 850, [{operand:l.Identifier}, {sign:t.DoublePlus}]);
 		lexem('PostfixUnaryOperator', 'PostfixDecrement', 850, [{operand:l.Identifier}, {sign:t.DoubleMinus}]);
@@ -774,8 +812,8 @@ var lang = (function(){
 			return tokenizer;
 		},
 		
-		getAggregator: function(){
-			var aggregator = new this.ast.Aggregator(), i;
+		getAggregator: function(tokenizer){
+			var aggregator = new this.ast.Aggregator(tokenizer || this.getTokenizer()), i;
 			for(i in this.definition.lexems) aggregator.defineLexem(this.definition.lexems[i]);
 			return aggregator;
 		},
@@ -784,7 +822,7 @@ var lang = (function(){
 		aggregate: function(tokens, aggregator){ return (aggregator || this.getAggregator()).aggregate(tokens); },
 		
 		treeOf: function(str){ 
-			var t = this.getTokenizer(), a = this.getAggregator();
+			var t = this.getTokenizer(), a = this.getAggregator(t);
 			return this.aggregate(this.tokenize(str, t, a), a); 
 		}
 	}

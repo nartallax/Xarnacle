@@ -99,7 +99,7 @@ var tests = {
 			{source: "typeof a != 'string'", result: 'typeof a != "string"'},
 			{source: "a = b = c = d", result: 'a = b = c = d'},
 			{source: "a = b >>>= c += d - (e = 2)", result: '((a=(b>>>=(c+=d)))-((e=2)))'},
-			{source: "a += c ** d", result: 'a += c ** d'},
+			{source: "a += c ** d", result: '(a+=(c**d))'},
 			{source: "/.*?$/ / /^\d+/g", result: '/.*?$/ / /^\d+/g'},
 			{source: "/\/*/ / /\*\//", result: '/\/*/ / /\*\//'},
 			{source: "a >>>= 3 >> 2 << 1", result: 'a >>>= 3 >> 2 << 1'},
