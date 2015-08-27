@@ -99,6 +99,7 @@ var lang = (function(){
 				this.tokens[token.priority] = token;
 			},
 			getTokens: function(){ return this.tokens },
+			getCharGroups: function(){ return this.charGroups; },
 			defineCharacterGroup:function(name, group){ this.charGroups[name] = group },
 			definePostProcessor:function(func, priority){ this.postProcessors.push({priority:priority || 0, func: func}); },
 			tokenize:function(str){
@@ -121,7 +122,7 @@ var lang = (function(){
 			},
 			nextToken:function(parsed, iter){
 				for(var i in this.tokens){
-					var token = this.tokens[i].parse(iter, parsed);
+					var token = this.tokens[i].parse(iter, parsed, this);
 					if(token) return token;
 				}
 			}
@@ -165,12 +166,12 @@ var lang = (function(){
 		var StateElement = function(val, tokenizer, aggregator){ this.val = val, this.tokenizer = tokenizer, this.aggregator = aggregator }
 		StateElement.prototype = {
 			matches: function(lexem, pos){
-				return !(this.val instanceof lexem.pattern[pos] && (pos !== 0 || !lexem.condition || lexem.condition(this)))? 
+				return !(this.val instanceof lexem.pattern[pos])? 
 							false:
 							pos === lexem.pattern.length - 1? 
 								true:
 								this.next?
-									this.next.matches(lexem, pos + 1):
+									this.next.matches(lexem, pos + 1) && (pos !== 0 || !lexem.condition || lexem.condition(this)):
 									false;
 			},
 			findMatchingIn: function(lexems){
@@ -269,28 +270,21 @@ var lang = (function(){
 		}
 		Lexem.prototype.toCode = function(){ throw new util.CodeGenerationException('could not generate code from lexem: have no code generation function', this); }
 		
-		var CharacterGroup = function(characters){
+		var CharacterGroup = function(characters){ // designed to be immutable
 			this.chars = {}, this.linked = [];
 			for(var i = 0; i < arguments.length; i++){
 				var arg = arguments[i];
-				if(typeof(arg) === 'string') this.add(arg);
-				else this.link(arg);
+				if(typeof(arg) === 'string') this.chars[arg] = true;
+				else if(Array.isArray(arg)) for(var i in arg) this.chars[arg[i]] = true;
+				else this.linked.push(arg);
 			}
 		}
 		CharacterGroup.prototype = {
-			add: function(c){ this.chars[c] = true; },
-			remove: function(c){ delete this.chars[c]; },
-			link: function(group){ this.linked.push(group); },
-			unlink: function(group){
-				var linked = [];
-				for(var i in this.linked)
-					if(this.linked[i] !== group)
-						linked.push(this.linked[i]);
-				this.linked = linked;
-			},
 			have: function(c){
 				if(this.chars[c]) return true;
-				for(var i in this.linked) if(this.linked[i].have(c)) return true;
+				for(var i in this.linked) 
+					if(this.linked[i].have(c)) 
+						return true;
 				return false;
 			},
 			isMakingUp: function(str){
@@ -315,8 +309,19 @@ var lang = (function(){
 	
 	var definition = (function(){ // language token and lexem definitions
 	
-		var tokens = {}, lexems = {},
+		var tokens = {}, lexems = {}, groups = {},
 			t = tokens, l = lexems; // just to keep code short
+		
+		groups.binDigits = new ast.CharacterGroup('0','1');
+		groups.octDigits = new ast.CharacterGroup(groups.binDigits,'234567'.split('')),
+		groups.digits = new ast.CharacterGroup(groups.octDigits, '8', '9'),
+		groups.hexDigits = new ast.CharacterGroup(groups.digits, "abcdefABCDEF".split('')),
+		groups.identifierStart = new ast.CharacterGroup('$_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')),
+		groups.identifier = new ast.CharacterGroup(groups.digits, groups.identifierStart),
+		groups.newline = new ast.CharacterGroup('\n', '\r'),
+		groups.space = new ast.CharacterGroup('\t', ' ', groups.newline);
+		
+		var isIdentifier = function(str){ return str.length > 0 && groups.identifierStart.have(str.charAt(0)) && groups.identifier.isMakingUp(str) };
 		
 		// функция для определения нового токена
 		var token = function(parent, name, priority, parse, isAbstract){
@@ -334,13 +339,13 @@ var lang = (function(){
 			token.prototype.isAbstract = token.isAbstract = typeof(isAbstract) === 'boolean'? isAbstract: parse? false: true;
 			token.prototype.getName = token.getName = function(){ return name };
 			token.prototype.parent = token.parent = parent;
-			token.prototype.parse = token.parse = parse? function(iter, parsed){
-					var content = parse.call(this || token, iter, parsed);
+			token.prototype.parse = token.parse = parse? function(iter, parsed, tokenizer){
+					var content = parse.call(this || token, iter, parsed, tokenizer);
 					return content === undefined? null: new (this || token)(content);
-				} : function(iter, parsed){ 
+				} : function(iter, parsed, tokenizer){ 
 					var firstParseableParent = parent;
 					while(!firstParseableParent.parse) firstParseableParent = firstParseableParent.parent;
-					return firstParseableParent.parse.call(this, iter, parsed); 
+					return firstParseableParent.parse.call(this, iter, parsed, tokenizer); 
 				}
 			
 			return tokens[name] = token;
@@ -374,7 +379,8 @@ var lang = (function(){
 		
 		// функция для определения нового ключевого слова / ключевой последовательности символов (оператора или чего-то в этом роде)
 		var key = function(name, word){
-			var key = token('Key', name, generatePriorityForKey(word), null, false);
+			var parent = isIdentifier(word)? 'KeyWord': 'KeySequence';
+			var key = token(parent, name, generatePriorityForKey(word), null, false);
 			key.prototype.sequence = key.sequence = word;
 			return key;
 		}
@@ -441,25 +447,28 @@ var lang = (function(){
 			}
 			return result;
 		}
-		var allLexemsHaveHigherOrEqualPriorityThan = function(lexems, priority){
+		var lexemHaveAncestor = function(lexem, ancestor){
+			return !lexem? false:
+					lexem === ancestor? true:
+					lexemHaveAncestor(lexem.parent, ancestor);
+		}
+		var filterLexemByClass = function(lexems, cl){
+			var result = [];
 			for(var i in lexems)
-				if(lexems[i].priority < priority)
-					return false;
-			return true;
+				if(lexemHaveAncestor(lexems[i], cl))
+					result.push(lexems[i]);
+			return result;
 		}
 		var duplicateUnaryOperatorAggregationCondition = function(priority){
+			var targetLexem = l.Expression;
 			return function(el){
+				if(!el.prev) return true;
+				if(el.prev.val instanceof ast.Lexem) return false;
 				
-				return !el.prev || (
-							el.prev.val instanceof ast.Token && 
-							allLexemsHaveHigherOrEqualPriorityThan(
-								lexemsEndingWith(
-									el.aggregator.getLexems(), 
-									el.prev
-								), 
-								priority
-							)
-						)
+				var possibleLexems = lexemsEndingWith(el.aggregator.getLexems(), el.prev.val);
+				var expressionLexems = filterLexemByClass(possibleLexems, targetLexem);
+				
+				return expressionLexems.length === 0; 
 			};
 		}
 		
@@ -480,11 +489,15 @@ var lang = (function(){
 			iter.inc(2);
 			return result;
 		});
-		token(null, 'Key', null, function(iter){
-			return iter.have(this.sequence) && (!isIdentifier(this.sequence) || !identifierChars.have(iter.get(this.sequence.length)))? 
-						(iter.inc(this.sequence.length), this.sequence):
-						undefined;
-		}, true); // некая константная последовательность символов
+		token(null, 'Key'); // некая константная последовательность символов
+		token('Key', 'KeyWord', null, function(iter, parsed, tokenizer){
+			return iter.have(this.sequence) && !groups.identifier.have(iter.get(this.sequence.length))? 
+				(iter.inc(this.sequence.length), this.sequence): 
+				undefined;
+		}, true);
+		token('Key', 'KeySequence', null, function(iter, parsed, tokenizer){
+			return iter.have(this.sequence)? (iter.inc(this.sequence.length), this.sequence): undefined;
+		}, true);
 		token(null, 'Identifier', 9000, function(iter){ 
 			if(!iter.charIn('identifierStart')) return;
 			var result = '';
@@ -529,7 +542,7 @@ var lang = (function(){
 			
 			var intOf = function(str, mult){
 				var l = str.length, i, res = 0, c;
-				for(i = 0; i < l; i++) res = (res * mult) + (str.charCodeAt(i) - (digits.have(str.charAt(i))? zero: a));
+				for(i = 0; i < l; i++) res = (res * mult) + (str.charCodeAt(i) - (groups.digits.have(str.charAt(i))? zero: a));
 				return res;
 			}
 			
@@ -541,7 +554,7 @@ var lang = (function(){
 			
 			return function(iter){
 				var char = iter.get();
-				if(!digits.have(char)) return;
+				if(!groups.digits.have(char)) return;
 				
 				var result = 0, startPart = iter.sequenceInGroup('digits');
 				
@@ -554,7 +567,7 @@ var lang = (function(){
 							default: return 0;
 						}
 					}
-					if(octDigits.isMakingUp(startPart)) return intOf(startPart, 8);
+					if(groups.octDigits.isMakingUp(startPart)) return intOf(startPart, 8);
 				}
 				return intOf(startPart, 10) + ((iter.get() === '.')? (iter.inc(), fractOf(iter.sequenceInGroup('digits'))): 0);
 			}
@@ -650,9 +663,13 @@ var lang = (function(){
 		
 		lexem('Expression', 'Identifier');
 		lexem('Identifier', 'SingleIdentifier', 7999, [{value:t.Identifier}], function(){ return this.value.content.toString(); })
-		lexem('Identifier', 'IdentifierChain', 900, [{left:l.Expression}, {sign:t.Point}, {right:l.Identifier}], function(){
+		lexem('Identifier', 'IdentifierChain');
+		lexem('IdentifierChain', 'CommonIdentifierChain', 900, [{left:l.Expression}, {sign:t.Point}, {right:l.Identifier}], function(){
 			return this.left.toCode() + '.' + this.right.toCode();
 		});
+		lexem('IdentifierChain', 'KeyWordIdentifierChain', 900, [{left:l.Expression}, {sign:t.Point}, {right:t.KeyWord}], function(){
+			return this.left.toCode() + '.' + this.right.content;
+		}, false, 0, function(el){ return el.next && el.next.next && isIdentifier(el.next.next.val.content); });
 		
 		var typicalBinOpCodeGen = function(){ return '(' + this.left.toCode() + this.sign.content + this.right.toCode() + ')'; },
 			typicalTernOpCodeGen = function(){ return '(' + 
@@ -742,30 +759,6 @@ var lang = (function(){
 		lexem('Expression','Parenthesis', 1500, [{left: t.LeftParenthesis}, {body:l.Expression}, {right: t.RightParenthesis}], 
 			function(){ return '(' + this.body.toCode() + ')'; })
 		
-		var binDigits = new ast.CharacterGroup('0','1'),
-			octDigits = new ast.CharacterGroup(binDigits,'2','3','4','5','6','7'),
-			digits = new ast.CharacterGroup(octDigits, '8', '9'),
-			hexDigits = new ast.CharacterGroup(digits, "a","b","c","d","e","f","A","B","C","D","E","F"),
-			identifierStartChars = new ast.CharacterGroup(),
-			identifierChars = new ast.CharacterGroup(digits, identifierStartChars),
-			newlineChars = new ast.CharacterGroup('\n', '\r'),
-			spaceChars = new ast.CharacterGroup('\t', ' ', newlineChars);
-			
-		(function(){
-			var i, start, finish;
-			
-			identifierStartChars.add('_');
-			identifierStartChars.add('$');
-			
-			start = 'a'.charCodeAt(0), finish = 'z'.charCodeAt(0);
-			for(i = start; i <= finish; i++) identifierStartChars.add(String.fromCharCode(i));
-			
-			start = 'A'.charCodeAt(0), finish = 'Z'.charCodeAt(0);
-			for(i = start; i <= finish; i++) identifierStartChars.add(String.fromCharCode(i));
-		})();
-		
-		var isIdentifier = function(str){ return str.length > 0 && identifierStartChars.have(str.charAt(0)) && identifierChars.isMakingUp(str) }
-		
 		var removeTrashTokensPostProcessor = function(t){
 			var result = [];
 			for(var i in t)
@@ -777,17 +770,7 @@ var lang = (function(){
 		return {
 			tokens: tokens,
 			lexems: lexems,
-			
-			charGroups: {
-				space: spaceChars,
-				newline: newlineChars,
-				identifier: identifierChars,
-				identifierStart: identifierStartChars,
-				digits: digits,
-				octDigits: octDigits,
-				hexDigits: hexDigits,
-				binDigits: binDigits
-			},
+			charGroups: groups,
 			
 			tokenizerPostProcessors: {
 				'100': removeTrashTokensPostProcessor
