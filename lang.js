@@ -51,7 +51,9 @@ var lang = (function(){
 			DefinitionException: DefinitionException, 
 			TokenizationException: TokenizationException,
 			AggregationException: AggregationException,
-			CodeGenerationException: CodeGenerationException
+			CodeGenerationException: CodeGenerationException,
+			
+			capitalize: function(str){ return str.substr(0, 1).toUpperCase() + str.substr(1); }
 		};
 		
 	})();
@@ -87,16 +89,24 @@ var lang = (function(){
 			также токен/лексема может быть назначена абстрактной даже при наличии функции/последовательности, при необходимости
 				
 		*/
-		var compareByPriority = function(a, b){ return b.priority - a.priority }
-
+		var compareByPriority = function(a, b){ return b.priority - a.priority },
+			compareTokensByPriority = function(a, b ){ return b.getPriority() - a.getPriority() };
+		var defineGetSet = function(base, name){
+			name = util.capitalize(name);
+			var get = 'get' + name, set = 'set' + name;
+			(base[set] = function(v){ return (base[get] = function(){ return v }), this })(null);
+		}
+		
 		var Tokenizer = function(){ this.tokens = [], this.tokenPriorities = {}, this.charGroups = {}, this.postProcessors = []; }
 		Tokenizer.prototype = {
 			defineToken:function(token){
-				if(token.isAbstract) return;
-				if(this.tokenPriorities[token.priority]) 
-					throw new util.DefinitionException("failed to define token with priority " + token.priority + ": already have token with such priority", token);
-				this.tokenPriorities[token.priority] = true;
-				this.tokens[token.priority] = token;
+				if(token.isAbstract()) return;
+				if(this.tokenPriorities[token.getPriority()]) {
+					
+					throw new util.DefinitionException("failed to define token with priority " + token.getPriority() + ": already have token with such priority", token);
+				}
+				this.tokenPriorities[token.getPriority()] = true;
+				this.tokens[token.getPriority()] = token;
 			},
 			getTokens: function(){ return this.tokens },
 			getCharGroups: function(){ return this.charGroups; },
@@ -107,7 +117,7 @@ var lang = (function(){
 				
 				for(i in this.charGroups) iter.defineCharacterGroup(i, this.charGroups[i]);
 				
-				this.tokens = this.tokens.sort(compareByPriority);
+				this.tokens = this.tokens.sort(compareTokensByPriority);
 				this.postProcessors = this.postProcessors.sort(compareByPriority);
 				
 				while(iter.nend()){
@@ -128,22 +138,43 @@ var lang = (function(){
 			}
 		};
 		
-		
-		var Token = function(){ 
-			/* properties: 
-				definition: parse, priority, isAbstract
-				instance: content
-			*/
+		var Token = function(){}
+			
+		var token = function(){
+			var token = function(content){ this.content = content; };
+			
+			(token.setName = function(v){ return this.getName = function(){ return v }, this })(null);
+			(token.setPriority = function(v){ return this.getPriority = function(){ return v }, this })(null);
+			(token.setParse = function(v){ return this.getParse = function(){ 
+				return v? v: this.getParent()? this.getParent().getParse(): null;
+			}, this})(null);
+			
+			token.setParent = function(parent){
+				this.prototype = new parent();
+				this.prototype.getName = function(){ return token.getName(); }
+				this.prototype.getContent = function(){ return this.content; }
+				this.prototype.toString = function(){ return 't:' + this.getName() + '(' + this.content + ')'; },
+				this.getParent = function(){ return parent };
+				return this;
+			};
+			token.setParent(Token);
+			
+			token.isAbstract = function(){ return !this.getPriority() || !this.getParse() };
+			token.toString = function(){ return 't:' + this.getName() };
+			token.parse = function(iter, parsed, tokenizer){
+				var alg = this.getParse();
+				if(alg){
+					var content = alg.call(this || token, iter, parsed, tokenizer);
+					return content === undefined? null: new (this || token)(content);
+				} else {
+					var parent = this.getParent();
+					while(parent && !parent.getParse()) parent = parent.parent;
+					return parent? parent.parse.call(this || token, iter, parsed, tokenizer): null; 
+				}
+			}
+			
+			return token;
 		}
-		Token.prototype = {
-			parse: function(iter){ 
-				throw new util.TokenizationException('could not parse token: no parsing function defined', iter.pos); 
-			},
-			toString: function(){ return 't:' + this.getName() + '(' + this.content + ')'; },
-			getName: function(){ return this.constructor.getName(); }
-		}
-		Token.getName = function(){ return this.tokenName || this.prototype.getName(); }
-		Token.toString = function(){ return 't:' + this.getName(); }
 		
 		var Aggregator = function(tokenizer){ this.lexems = [], this.lexemsByPriority = {}, this.tokenizer = tokenizer }
 		Aggregator.prototype = {
@@ -277,25 +308,18 @@ var lang = (function(){
 		Lexem.prototype.toCode = function(){ throw new util.CodeGenerationException('could not generate code from lexem: have no code generation function', this); }
 		
 		var CharacterGroup = function(characters){ // designed to be immutable
-			this.chars = {}, this.linked = [];
+			this.chars = {};
 			for(var i = 0; i < arguments.length; i++){
 				var arg = arguments[i];
-				if(typeof(arg) === 'string') this.chars[arg] = true;
-				else if(Array.isArray(arg)) for(var i in arg) this.chars[arg[i]] = true;
-				else this.linked.push(arg);
+				if(typeof(arg) === 'string') for(var j = 0; j < arg.length; j++) this.chars[arg.charAt(j)] = true;
+				else for(var j in arg.chars) this.chars[j] = true;
 			}
 		}
 		CharacterGroup.prototype = {
-			have: function(c){
-				if(this.chars[c]) return true;
-				for(var i in this.linked) 
-					if(this.linked[i].have(c)) 
-						return true;
-				return false;
-			},
+			have: function(c){ return this.chars[c] || false; },
 			isMakingUp: function(str){
 				for(var i = 0; i < str.length; i++)
-					if(!this.have(str.charAt(i)))
+					if(!this.chars[str.charAt(i)])
 						return false;
 				return true;
 			}
@@ -308,7 +332,9 @@ var lang = (function(){
 			Aggregator: Aggregator, 
 			State: State, 
 			StateElement: StateElement,
-			Lexem: Lexem
+			Lexem: Lexem,
+			
+			token: token
 		};
 	
 	})();
@@ -318,43 +344,24 @@ var lang = (function(){
 		var tokens = {}, lexems = {}, groups = {},
 			t = tokens, l = lexems; // just to keep code short
 		
-		groups.binDigits = new ast.CharacterGroup('0','1');
-		groups.octDigits = new ast.CharacterGroup(groups.binDigits,'234567'.split('')),
-		groups.digits = new ast.CharacterGroup(groups.octDigits, '8', '9'),
-		groups.hexDigits = new ast.CharacterGroup(groups.digits, "abcdefABCDEF".split('')),
-		groups.identifierStart = new ast.CharacterGroup('$_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')),
+		groups.binDigits = new ast.CharacterGroup('01');
+		groups.octDigits = new ast.CharacterGroup(groups.binDigits,'234567'),
+		groups.digits = new ast.CharacterGroup(groups.octDigits, '89'),
+		groups.hexDigits = new ast.CharacterGroup(groups.digits, "abcdefABCDEF"),
+		groups.identifierStart = new ast.CharacterGroup('$_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'),
 		groups.identifier = new ast.CharacterGroup(groups.digits, groups.identifierStart),
-		groups.newline = new ast.CharacterGroup('\n', '\r'),
-		groups.space = new ast.CharacterGroup('\t', ' ', groups.newline);
+		groups.newline = new ast.CharacterGroup('\n\r'),
+		groups.space = new ast.CharacterGroup('\t ', groups.newline);
 		
 		var isIdentifier = function(str){ return str.length > 0 && groups.identifierStart.have(str.charAt(0)) && groups.identifier.isMakingUp(str) };
 		
 		// функция для определения нового токена
 		var token = function(parent, name, priority, parse, isAbstract){
-			
-			parent = parent? tokens[parent]: ast.Token;
-			var token = function(content){ this.content = content; };
-			token.prototype = new parent();
-			
-			token.prototype.toString = token.toString = function(){ 
-				return this instanceof token?
-					'ti:' + name + '(' + this.content + ')':
-					'td:' + name;
-			}
-			token.prototype.priority = token.priority = priority;
-			token.prototype.isAbstract = token.isAbstract = typeof(isAbstract) === 'boolean'? isAbstract: parse? false: true;
-			token.prototype.getName = token.getName = function(){ return name };
-			token.prototype.parent = token.parent = parent;
-			token.prototype.parse = token.parse = parse? function(iter, parsed, tokenizer){
-					var content = parse.call(this || token, iter, parsed, tokenizer);
-					return content === undefined? null: new (this || token)(content);
-				} : function(iter, parsed, tokenizer){ 
-					var firstParseableParent = parent;
-					while(!firstParseableParent.parse) firstParseableParent = firstParseableParent.parent;
-					return firstParseableParent.parse.call(this, iter, parsed, tokenizer); 
-				}
-			
-			return tokens[name] = token;
+			return tokens[name] = ast.token()
+				.setParent(parent? tokens[parent]: ast.Token)
+				.setName(name)
+				.setPriority(priority)
+				.setParse(parse);
 		};
 		
 		var generatePriorityForKey = (function(){
