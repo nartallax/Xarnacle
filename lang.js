@@ -18,42 +18,99 @@ var lang = (function(){
 			},
 			inc: function(len){ return this.pos += (arguments.length > 0? len: 1), this; },
 			isSpace: function(c){ return this.spaces[c] },
-			defineCharacterGroup: function(name, group){ this.groups[name] = group; },
-			sequenceInGroup: function(g){ g = this.groups[g]; var r = ''; while(this.nend()&&g.have(this.get())) r += this.gin(); return r;},
-			sequenceNotInGroup: function(g){ g = this.groups[g]; var r = ''; while(this.nend()&&!g.have(this.get())) r+=this.gin();return r;}
+			defineCharacterGroup: function(group){ 
+				if(this.groups[group.getName()])
+					throw new util.DefinitionException('failed to define character group with name "' + group.getName() + '": another group is already defined with this name', group);
+				this.groups[group.getName()] = group; 
+			},
+			undefineCharacterGroup: function(name){
+				if(!this.groups[name])
+					throw new util.DefinitionException('failed to undefine character group with name "' + name + '": group not found', null);
+				delete this.groups[name];
+			},
+			sequenceInGroup: function(g){ g = this.groups[g]; var r = ''; while(this.nend() && g.have(this.get())) r += this.gin(); return r; },
+			sequenceNotInGroup: function(g){ g = this.groups[g]; var r = ''; while(this.nend() && !g.have(this.get())) r += this.gin(); return r; }
+		}
+
+		// коллекция; значения указанных параметров уникальны для каждого элемента этой коллекции
+		var UniqParamList = function(name, params, defaultParam, sortParam){ 
+			this.name = name, this.params = params, this.defaultParam = defaultParam || params[0], this.sortParam = defaultParam || params[params.length - 1];
+			this.getters = [], this.values = {};
+			for(var i in params) {
+				this.getters[params[i]] = 'get' + capitalize(params[i]);
+				this.values[param] = {};
+			}
+		}
+		UniqParamList.prototype = {
+			add: function(val){
+				for(var i in this.params){
+					var pName = params[i], pVal = val[this.getters[pName]]();
+					if(this.values[pName][pVal])
+						throw new util.DefinitionException('failed to define ' + this.name + ' with ' + pName + ' "' + name + '": another ' + this.name + ' is already defined with this ' + pName, val);
+				}
+				
+				for(var i in this.params){
+					var pName = params[i], pVal = val[this.getters[pName]]();
+					this.values[pName][pVal] = val;
+				}
+				
+				return this;
+			}, 
+			remove: function(key, keyParam){
+				keyParam = keyParam || this.defaultParam;
+				var val = this.values[keyParam][key];
+				if(!val) throw new util.DefinitionException('failed to undefine ' + this.name + ' with ' + keyParam + ' "' + key + '": ' + this.name + ' not found', null);
+				for(var i in this.params){
+					var pName = this.params[i];
+					delete this.values[pName][val[this.getters[pName]]()];
+				}
+				return this;
+			},
+			sortedValues: function(sortParam){
+				var getter = this.getters[sortParam || this.sortParam], data = this.values[this.defaultParam],
+					compare = function(a, b){ return b = b[getter](), a = a[getter](), a > b? -1: b > a? 1: 0 };
+				
+				return this.values().sort(compare);
+			},
+			values: function(){
+				var result = [];
+				for(var i in data) result.push(data[i]);
+				return result;
+			}
 		}
 		
-		// abstract language exception
-		var LanguageException = function(){};
+		var LanguageException = function(name){ this.name = name };
+		LanguageException.prototype.toString = function(){ return this.name + (this.pos? ' at ' + this.pos: '') + (this.msg? ': ' + this.msg:''); }
+		LanguageException.derive = function(name, base){ return base.prototype = new LanguageException(name), base };
 		
-		// some clash of definitions of tokens or lexems
-		var DefinitionException = function(msg, token){ this.msg = msg, this.token = token }
-		DefinitionException.prototype = new LanguageException();
-		DefinitionException.prototype.toString = function(){ return 'DefinitionException: ' + this.msg; }
-		
-		// exception of turning source code string into a sequence of tokens
-		var TokenizationException = function(msg, pos){ this.msg = msg, this.pos = pos }
-		TokenizationException.prototype = new LanguageException();
-		TokenizationException.prototype.toString = function(){ return 'TokenizationException at ' + this.pos + ': ' + this.msg; }
-		
-		var AggregationException = function(msg, state){ this.msg = msg, this.state = state };
-		AggregationException.prototype = new LanguageException();
-		AggregationException.prototype.toString = function(){ return 'AggregationException: ' + this.msg; }
-		
-		var CodeGenerationException = function(msg, lexem){ this.msg = msg, this.lexem = lexem }
-		CodeGenerationException.prototype = new LanguageException();
-		CodeGenerationException.prototype.toString = function(){ return 'CodeGenerationException: ' + this.msg }
+		var capitalize = function(str){ return str.substr(0, 1).toUpperCase() + str.substr(1); },
+			defineGetSet = function(base, name){
+				name = util.capitalize(name);
+				var get = 'get' + name, set = 'set' + name;
+				(base[set] = function(v){ return (base[get] = function(){ return v }), this })(null);
+			},
+			defineSettableOnce = function(base, name){
+				var cap = util.capitalize(name);
+				var get = 'get' + cap, set = 'set' + cap;
+				(base[set] = function(v){ 
+					if(this[get] && this[get]()) 
+						throw new util.DefinitionException(name + ' must not be redefined. Old ' + name + ': ' + this[get](), base);
+					return this[get] = function(){ return v }, this;
+				})(null);
+			};
 		
 		return {
 			Striter: Striter,
 			
 			LanguageException: LanguageException,
-			DefinitionException: DefinitionException, 
-			TokenizationException: TokenizationException,
-			AggregationException: AggregationException,
-			CodeGenerationException: CodeGenerationException,
+			DefinitionException: LanguageException.derive('DefinitionException', function(msg, token){ this.msg = msg, this.token = token }), 
+			TokenizationException: LanguageException.derive('TokenizationException', function(msg, pos){ this.msg = msg, this.pos = pos }),
+			AggregationException: LanguageException.derive('AggregationException', function(msg, state){ this.msg = msg, this.state = state }),
+			CodeGenerationException: LanguageException.derive('CodeGenerationException', function(msg, lexem){ this.msg = msg, this.lexem = lexem }),
 			
-			capitalize: function(str){ return str.substr(0, 1).toUpperCase() + str.substr(1); }
+			capitalize: capitalize,
+			defineGetSet: defineGetSet,
+			defineSettableOnce: defineSettableOnce
 		};
 		
 	})();
@@ -91,59 +148,15 @@ var lang = (function(){
 		*/
 		var compareByPriority = function(a, b){ return b.priority - a.priority },
 			compareTokensByPriority = function(a, b ){ return b.getPriority() - a.getPriority() };
-		var defineGetSet = function(base, name){
-			name = util.capitalize(name);
-			var get = 'get' + name, set = 'set' + name;
-			(base[set] = function(v){ return (base[get] = function(){ return v }), this })(null);
-		}
 		
-		var Tokenizer = function(){ this.tokens = [], this.tokenPriorities = {}, this.charGroups = {}, this.postProcessors = []; }
-		Tokenizer.prototype = {
-			defineToken:function(token){
-				if(token.isAbstract()) return;
-				if(this.tokenPriorities[token.getPriority()]) {
-					
-					throw new util.DefinitionException("failed to define token with priority " + token.getPriority() + ": already have token with such priority", token);
-				}
-				this.tokenPriorities[token.getPriority()] = true;
-				this.tokens[token.getPriority()] = token;
-			},
-			getTokens: function(){ return this.tokens },
-			getCharGroups: function(){ return this.charGroups; },
-			defineCharacterGroup:function(name, group){ this.charGroups[name] = group },
-			definePostProcessor:function(func, priority){ this.postProcessors.push({priority:priority || 0, func: func}); },
-			tokenize:function(str){
-				var parsed = [], iter = new util.Striter(str);
-				
-				for(i in this.charGroups) iter.defineCharacterGroup(i, this.charGroups[i]);
-				
-				this.tokens = this.tokens.sort(compareTokensByPriority);
-				this.postProcessors = this.postProcessors.sort(compareByPriority);
-				
-				while(iter.nend()){
-					var next = this.nextToken(parsed, iter);
-					if(!next) throw new util.TokenizationException("could not parse token", iter.pos);
-					parsed.push(next);
-				}
-				
-				for(i in this.postProcessors) parsed = this.postProcessors[i].func.call(this, parsed);
-				
-				return parsed;
-			},
-			nextToken:function(parsed, iter){
-				for(var i in this.tokens){
-					var token = this.tokens[i].parse(iter, parsed, this);
-					if(token) return token;
-				}
-			}
-		};
+		// basic proto-classes
+		var Token = function(){}, Lexem = function(){};
 		
-		var Token = function(){}
-			
 		var token = function(){
 			var token = function(content){ this.content = content; };
 			
-			(token.setName = function(v){ return this.getName = function(){ return v }, this })(null);
+			util.defineSettableOnce(token, 'priority');
+			util.defineSettableOnce(token, 'name');
 			(token.setPriority = function(v){ return this.getPriority = function(){ return v }, this })(null);
 			(token.setParse = function(v){ return this.getParse = function(){ 
 				return v? v: this.getParent()? this.getParent().getParse(): null;
@@ -175,6 +188,66 @@ var lang = (function(){
 			
 			return token;
 		}
+		
+		var Tokenizer = function(){ 
+			this.tokenByPriorities = {}, this.tokenByNames = {},
+			this.charGroups = {}, 
+			this.postProcessors = []; }
+		Tokenizer.prototype = {
+			defineToken:function(token){
+				if(token.isAbstract()) return;
+				if(this.tokenByPriorities[token.getPriority()])
+					throw new util.DefinitionException("failed to define token with priority " + token.getPriority() + ": already have token with such priority", token);
+				if(this.tokenByNames[token.getName()])
+					throw new util.DefinitionException("failed to define token with name " + token.getName() + ": already have token with such name", token);
+				this.tokenByPriorities[token.getPriority()] = this.tokenByNames[token.getName()] = token;
+			},
+			undefineToken: function(name){
+				var token = this.tokenByNames[name];
+				if(!token) throw new util.DefinitionException("unable to undefine token with name '" + name + "': token not found", null);
+				delete this.tokenByNames[name];
+				delete this.tokenByPriorities[token.getPriority()];
+			},
+			getTokens: function(){  return this.tokenByNames; },
+			getCharGroups: function(){ return this.charGroups; },
+			defineCharacterGroup:function(group){ 
+				if(this.charGroups[group.getName()])
+					throw new util.DefinitionException('failed to define character group with name "' + group.getName() + '": another group is already defined with this name', group);
+				this.charGroups[group.getName()] = group;
+			},
+			undefineCharacterGroup: function(name){
+				if(!this.charGroups[name])
+					throw new util.DefinitionException('failed to undefine character group with name "' + name + '": group not found', null);
+				delete this.charGroups[name];
+			},
+			definePostProcessor:function(processor){ this.postProcessors.push({priority:priority || 0, func: func}); },
+			tokenize:function(str){
+				var parsed = [], iter = new util.Striter(str);
+				
+				for(i in this.charGroups) iter.defineCharacterGroup(this.charGroups[i]);
+				
+				var tokens = [];
+				for(var i in this.tokenByPriorities) tokens.push(this.tokenByPriorities[i]);
+				tokens = tokens.sort(compareTokensByPriority);
+				this.postProcessors = this.postProcessors.sort(compareByPriority);
+				
+				while(iter.nend()){
+					var next = this.nextToken(parsed, iter, tokens);
+					if(!next) throw new util.TokenizationException("could not parse token", iter.pos);
+					parsed.push(next);
+				}
+				
+				for(i in this.postProcessors) parsed = this.postProcessors[i].func.call(this, parsed);
+				
+				return parsed;
+			},
+			nextToken:function(parsed, iter, tokens){
+				for(var i in tokens){
+					var token = tokens[i].parse(iter, parsed, this);
+					if(token) return token;
+				}
+			}
+		};
 		
 		var Aggregator = function(tokenizer){ this.lexems = [], this.lexemsByPriority = {}, this.tokenizer = tokenizer }
 		Aggregator.prototype = {
@@ -298,19 +371,12 @@ var lang = (function(){
 			}
 		}
 		
-		
-		var Lexem = function(){
-			/* properties:
-				definition: pattern (sequence of token/lexem defintions), priority, toCode, condition
-				instance: content (sequence of token/lexem instances)
-			*/
-		}
-		Lexem.prototype.toCode = function(){ throw new util.CodeGenerationException('could not generate code from lexem: have no code generation function', this); }
-		
-		var CharacterGroup = function(characters){ // designed to be immutable
+		var CharacterGroup = function(firstArg){ // designed to be immutable
 			this.chars = {};
-			for(var i = 0; i < arguments.length; i++){
-				var arg = arguments[i];
+			util.defineSettableOnce(this, 'name');
+			var args = Array.isArray(firstArg)? firstArg: arguments;
+			for(var i = 0; i < args.length; i++){
+				var arg = args[i];
 				if(typeof(arg) === 'string') for(var j = 0; j < arg.length; j++) this.chars[arg.charAt(j)] = true;
 				else for(var j in arg.chars) this.chars[j] = true;
 			}
@@ -325,10 +391,18 @@ var lang = (function(){
 			}
 		}
 		
+		var Processor = function(algo){ // technically function with name and priority
+			util.defineSettableOnce(this, 'name');
+			util.defineSettableOnce(this, 'priority');
+			this.algo = algo;
+		}
+		Processor.prototype.apply = function(){ return this.algo.apply(this, arguments); }
+		
 		return { 
 			Tokenizer: Tokenizer, 
 			Token: Token, 
 			CharacterGroup: CharacterGroup, 
+			Processor: Processor,
 			Aggregator: Aggregator, 
 			State: State, 
 			StateElement: StateElement,
@@ -343,60 +417,60 @@ var lang = (function(){
 	
 		var tokens = {}, lexems = {}, groups = {},
 			t = tokens, l = lexems; // just to keep code short
-		
-		groups.binDigits = new ast.CharacterGroup('01');
-		groups.octDigits = new ast.CharacterGroup(groups.binDigits,'234567'),
-		groups.digits = new ast.CharacterGroup(groups.octDigits, '89'),
-		groups.hexDigits = new ast.CharacterGroup(groups.digits, "abcdefABCDEF"),
-		groups.identifierStart = new ast.CharacterGroup('$_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'),
-		groups.identifier = new ast.CharacterGroup(groups.digits, groups.identifierStart),
-		groups.newline = new ast.CharacterGroup('\n\r'),
-		groups.space = new ast.CharacterGroup('\t ', groups.newline);
-		
+			
+		var group = function(name, content){ return groups[name] = new ast.CharacterGroup(content).setName(name); },
+			token = function(parent, name, priority, parse, isAbstract){
+				return tokens[name] = ast.token()
+					.setParent(parent? tokens[parent]: ast.Token)
+					.setName(name)
+					.setPriority(priority)
+					.setParse(parse);
+			};
+			
 		var isIdentifier = function(str){ return str.length > 0 && groups.identifierStart.have(str.charAt(0)) && groups.identifier.isMakingUp(str) };
 		
-		// функция для определения нового токена
-		var token = function(parent, name, priority, parse, isAbstract){
-			return tokens[name] = ast.token()
-				.setParent(parent? tokens[parent]: ast.Token)
-				.setName(name)
-				.setPriority(priority)
-				.setParse(parse);
-		};
+		var groupsRaw = [
+			group('binDigits', ['01']),
+			group('octDigits', [groups.binDigits,'234567']),
+			group('digits', [groups.octDigits, '89']),
+			group('hexDigits', [groups.digits, "abcdefABCDEF"]),
+			group('identifierStart', ['$_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ']),
+			group('identifier', [groups.digits, groups.identifierStart]),
+			group('newline', ['\n\r']),
+			group('space', ['\t ', groups.newline]),
+		]
 		
-		var generatePriorityForKey = (function(){
+		var key = (function(){
+			var generatePriorityForKey = (function(){
 			
-			var offset = 10000, // приоритеты для ключей длиной 1 начнутся с этого значения
-				keysPerLength = 1000, // количество возможных различных ключей на 1 значение длины
-				maxPriority = 0x8fffffff;
+				var offset = 10000, keysPerLength = 1000, maxPriority = 0x8fffffff, ownedValues = {};
 				
-			var ownedValues = {};
-			
-			return function(word){
-				var len = word.length, result;
-				if(!((len + '') in ownedValues)) {
-					ownedValues[len] = 0;
-					result = (len * keysPerLength) + offset;
-				} else {
-					ownedValues[len] = ownedValues[len] + 1;
-					if(ownedValues[len] >= keysPerLength)
-						throw new util.DefinitionException('could not determine priority for key "' + word + '": there is already defined maximum of ' + keysPerLength + ' for keys with length ' + len, word);
-					result = (len * keysPerLength) + offset + ownedValues[len];
+				return function(word){
+					var len = word.length, result;
+					if(!((len + '') in ownedValues)) {
+						ownedValues[len] = 0;
+						result = (len * keysPerLength) + offset;
+					} else {
+						ownedValues[len] = ownedValues[len] + 1;
+						if(ownedValues[len] >= keysPerLength)
+							throw new util.DefinitionException('could not determine priority for key "' + word + '": there is already defined maximum of ' + keysPerLength + ' for keys with length ' + len, word);
+						result = (len * keysPerLength) + offset + ownedValues[len];
+					}
+					if(result >= maxPriority)
+						throw new util.DefinitionException('could not determine priority for key "' + word + '": priority ' + result + ' is above maximum priority for keys =' + maxPriority + '. (maybe the key is too long?)', word);
+					return result;
 				}
-				if(result >= maxPriority)
-					throw new util.DefinitionException('could not determine priority for key "' + word + '": priority ' + result + ' is above maximum priority for keys =' + maxPriority + '. (maybe the key is too long?)', word);
-				return result;
+				
+			})();
+			
+			return function(name, word){
+				var parent = isIdentifier(word)? 'KeyWord': 'KeySequence';
+				var key = token(parent, name, generatePriorityForKey(word), null, false);
+				key.prototype.sequence = key.sequence = word;
+				return key;
 			}
 			
 		})();
-		
-		// функция для определения нового ключевого слова / ключевой последовательности символов (оператора или чего-то в этом роде)
-		var key = function(name, word){
-			var parent = isIdentifier(word)? 'KeyWord': 'KeySequence';
-			var key = token(parent, name, generatePriorityForKey(word), null, false);
-			key.prototype.sequence = key.sequence = word;
-			return key;
-		}
 		
 		var lexem = function(parent, name, priority, patternWithNames, toCode, isAbstract, reverseLookaheadLength, condition){
 			
@@ -753,7 +827,7 @@ var lang = (function(){
 		return {
 			tokens: tokens,
 			lexems: lexems,
-			charGroups: groups,
+			groups: groupsRaw,
 			
 			tokenizerPostProcessors: {
 				'100': removeTrashTokensPostProcessor
@@ -773,7 +847,7 @@ var lang = (function(){
 		getTokenizer: function(){
 			var tokenizer = new this.ast.Tokenizer(), i;
 			for(i in this.definition.tokens) tokenizer.defineToken(this.definition.tokens[i]);
-			for(i in this.definition.charGroups) tokenizer.defineCharacterGroup(i, this.definition.charGroups[i]);
+			for(i in this.definition.groups) tokenizer.defineCharacterGroup(this.definition.groups[i]);
 			for(i in this.definition.tokenizerPostProcessors) tokenizer.definePostProcessor(this.definition.tokenizerPostProcessors[i], parseInt(i));
 			return tokenizer;
 		},
