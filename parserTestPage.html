@@ -75,7 +75,7 @@
 					var tokensArr = lang.tokenize(str)
 					tokens = tokensArr.join('\n');
 					tree = lang.aggregate(tokensArr);
-					code = tree.toCode();
+					code = tree.translate();
 				} catch(e){
 					ex = e;
 				}
