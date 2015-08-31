@@ -87,6 +87,11 @@ var lang = (function(){
 				for(var i in data) val = data[i], pval = val[param](), result[pval]? result[pval].push(val): result[pval] = [val];
 				return result;
 			},
+			map = function(arr, func){
+				var result = [], l = arr.length;
+				for(var i = 0; i < l; i++) result.push(func(arr[i]));
+				return result;
+			},
 			
 			// вспомогательные функции для определения классов
 			defineSettableOnce = function(base, name){
@@ -226,10 +231,11 @@ var lang = (function(){
 				
 				util.defineSettableOnce(lexem, 'priority');
 				util.defineSettableOnce(lexem, 'name');
-				util.defineGetSet(lexem, 'reverseLookaheadLength');
 				util.defineGetSet(lexem, 'translator', 'parent');
 				util.defineGetSet(lexem, 'sourcer', 'parent');
 				util.defineGetSet(lexem, 'parsingCondition', 'parent');
+				util.defineGetSet(lexem, 'parse');
+				util.defineGetSet(lexem, 'isRightAssociative');
 				
 				(lexem.setParent = function(parent){
 					this.prototype = new parent();
@@ -270,10 +276,64 @@ var lang = (function(){
 				lexem.addPart = function(name, cls){ return this.pattern.push(cls), this.description.push({name:name, cls: cls}), this; }
 				lexem.isAbstract = function(){ return this.pattern.length < 1 }
 				lexem.getPattern = function(){ return this.pattern };
+				lexem.setPattern = function(val){ return this.pattern = val, this };
 				lexem.toString = function(){ return 'l:' + this.getName() };
+				lexem.parse = function(el, state){
+					var parse = this.getParse();
+					if(!parse) throw new util.AggregationException('dont know how to parse ' + this, this);
+					return parse.call(this, el, state);
+				}
+				
+				lexem.setParse(defaultLexemParser);
 				
 				return lexem;
 			}
+			
+			
+		var defaultLexemParser = (function(){
+			
+			var getRightAssociativeLexems = function(state, priority){ // вот это бы как-нибудь оптимизировать, некрасиво
+				var ls = state.aggregator.getLexems(), result = [];
+				for(var i in ls)
+					if(ls[i].getPriority() === priority && ls[i].getIsRightAssociative())
+						result.push(ls[i]);
+				return result;
+			}
+			
+			var parseForward = function(lexems, el, state){
+				var p;
+				for(var i in lexems)
+					if(p = lexems[i].parse(el, state))
+						return p;
+			}
+			
+			var parse = function(el, state){
+				var cond = this.getParsingCondition(); // учитываем условие парсинга
+				if(cond && !cond.call(this, el, state)) return;
+				
+				var content = [], n = el; // собираем контент; заодно получаем концевую ноду
+				for(var i in this.pattern){
+					if(!n || !(n.val instanceof this.pattern[i])) return;
+					content.push(n.val);
+					n = n.next;
+				}
+				
+				if(n && n.prev && this.getIsRightAssociative()) { // учитываем правоассоциативность
+					var rolexs = getRightAssociativeLexems(state, this.getPriority());
+					var parsed = parseForward(rolexs, n.prev, state);
+					if(parsed) content[content.length - 1] = parsed;
+					el.next = n.prev.next;
+				} else {
+					el.next = n;
+					if(n) n.prev = el;
+				}
+				
+				return el.val = new this(content);
+			};
+			
+			return parse;
+			
+		})();
 		
 		var Tokenizer = function(){ 
 			util.defineStorage(this, 'token', ['name', 'priority'], 'priority', function(t){ return !t.isAbstract() });
@@ -282,7 +342,12 @@ var lang = (function(){
 			util.defineStorage(this, 'preProcessor', ['name', 'priority'], 'priority');
 		}
 		Tokenizer.prototype = {
-			tokenize:function(str){ return this.doPostProcess(this.doTokenize(this.doPreProcess(str))) },
+			tokenize:function(str, aggr){ 
+				this.aggregator = aggr;
+				var result = this.doPostProcess(this.doTokenize(this.doPreProcess(str))) 
+				delete this.aggregator;
+				return result;
+			},
 			
 			doPreProcess: function(code){
 				var procs = this.getPreProcessors();
@@ -370,15 +435,16 @@ var lang = (function(){
 			},
 			mutateAheadMultiple: function(lexems){
 				var aheadable = [], i;
+				/*
 				for(i in lexems)
 					if(lexems[i].getReverseLookaheadLength())
 						aheadable.push(lexems[i]);
-						
+					*/	
 				if(!aheadable.length) return false;
 				
 				for(var i in aheadable){
 					var lexem = aheadable[i];
-					var ahead = this.getAhead(lexem.getReverseLookaheadLength());
+					var ahead = this.getAhead(/*lexem.getReverseLookaheadLength()*/0);
 					if(!ahead || !ahead.findMatchingIn(aheadable)) continue;
 					if(!ahead.mutateAheadMultiple(aheadable))
 						ahead.mutateMultiple(aheadable)
@@ -386,15 +452,7 @@ var lang = (function(){
 				}
 				return false;
 			},
-			mutate: function(lexem){
-				var content = [this.val], l = lexem.pattern.length;
-				while(--l > 0){
-					content.push(this.next.val);
-					this.next = this.next.next;
-				}
-				if(this.next) this.next.prev = this;
-				this.val = new lexem(content);
-			},
+			mutate: function(lexem){ lexem.parse(this, {tokenizer:this.tokenizer, aggregator:this.aggregator}) },
 			mutateMultiple: function(lexems){
 				var lexem;
 				while(lexem = this.findMatchingIn(lexems)){
@@ -460,7 +518,7 @@ var lang = (function(){
 			}
 		}
 		
-		var Processor = function(algo){ // technically function with name and priority
+		var Processor = function(algo){ // class to bind name and priority to some function
 			util.defineSettableOnce(this, 'name');
 			util.defineSettableOnce(this, 'priority');
 			this.algo = algo;
@@ -554,7 +612,8 @@ var lang = (function(){
 				.setPriority(priority)
 				.setTranslator(toCode)
 				.setParsingCondition(condition)
-				.setReverseLookaheadLength(reverseLookaheadLength);
+				//.setReverseLookaheadLength(reverseLookaheadLength);
+				.setIsRightAssociative(reverseLookaheadLength > 0);
 				
 			for(var i in patternWithNames)
 				for(var j in patternWithNames[i])
