@@ -77,15 +77,18 @@ var lang = (function(){
 		LanguageException.prototype.toString = function(){ return this.name + (this.pos? ' at ' + this.pos: '') + (this.msg? ': ' + this.msg:''); }
 		LanguageException.derive = function(name, base){ return base.prototype = new LanguageException(name), base };
 		
+			// строковые операции
 		var capitalize = function(str){ return str.substr(0, 1).toUpperCase() + str.substr(1); },
 			getterOf = function(paramName){ return 'get' + capitalize(paramName) },
 			
+			// операции с коллекциями
 			groupBy = function(data, param){
 				var result = {}, param = getterOf(param), val, pval;
 				for(var i in data) val = data[i], pval = val[param](), result[pval]? result[pval].push(val): result[pval] = [val];
 				return result;
 			},
 			
+			// вспомогательные функции для определения классов
 			defineSettableOnce = function(base, name){
 				var cap = util.capitalize(name);
 				var get = 'get' + cap, set = 'set' + cap;
@@ -105,7 +108,7 @@ var lang = (function(){
 			
 				return this;
 			},
-			defineGetSet = function(base, name, parentRecurseParam){
+			defineGetSet = function(base, name, parentRecurseParam){ // если указан имя параметра родителя - то будет рекурсивно искать в родителе значение
 				name = util.capitalize(name);
 				var get = 'get' + name, set = 'set' + name, pGet;
 				if(parentRecurseParam) pGet = getterOf(parentRecurseParam);
@@ -175,9 +178,6 @@ var lang = (function(){
 			также токен/лексема может быть назначена абстрактной даже при наличии функции/последовательности, при необходимости
 				
 		*/
-		var compareByPriority = function(a, b){ return b.priority - a.priority },
-			compareTokensByPriority = function(a, b ){ return b.getPriority() - a.getPriority() };
-		
 		// basic proto-classes
 		var Token = function(){}, Lexem = function(){};
 		
@@ -282,12 +282,7 @@ var lang = (function(){
 			util.defineStorage(this, 'preProcessor', ['name', 'priority'], 'priority');
 		}
 		Tokenizer.prototype = {
-			tokenize:function(str){
-				str = this.doPreProcess(str);
-				var tokens = this.doTokenize(str);
-				tokens = this.doPostProcess(tokens);
-				return tokens;
-			},
+			tokenize:function(str){ return this.doPostProcess(this.doTokenize(this.doPreProcess(str))) },
 			
 			doPreProcess: function(code){
 				var procs = this.getPreProcessors();
@@ -580,7 +575,7 @@ var lang = (function(){
 		var lexemHaveAncestor = function(lexem, ancestor){
 			return !lexem? false:
 					lexem === ancestor? true:
-					lexemHaveAncestor(lexem.parent, ancestor);
+					lexemHaveAncestor(lexem.getParent(), ancestor);
 		}
 		var filterLexemByClass = function(lexems, cl){
 			var result = [];
