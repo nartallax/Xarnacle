@@ -80,6 +80,19 @@ var lang = (function(){
 			// строковые операции
 		var capitalize = function(str){ return str.substr(0, 1).toUpperCase() + str.substr(1); },
 			getterOf = function(paramName){ return 'get' + capitalize(paramName) },
+			addSlashes = function(str){
+				return str
+					.replace('\\', '\\\\')
+					.replace('"', '\\"')
+					.replace("'", "\\'")
+					.replace('\n', '\\n')
+					.replace('\r', '\\r')
+					.replace('\b', '\\b')
+					.replace('\f', '\\f')
+					.replace('\O', '\\O')
+					.replace('\t', '\\t')
+					.replace('\v', '\\v');
+			},
 			
 			// операции с коллекциями
 			groupBy = function(data, param){
@@ -87,11 +100,11 @@ var lang = (function(){
 				for(var i in data) val = data[i], pval = val[param](), result[pval]? result[pval].push(val): result[pval] = [val];
 				return result;
 			},
-			map = function(arr, func){
-				var result = [], l = arr.length;
-				for(var i = 0; i < l; i++) result.push(func(arr[i]));
+			invertArray = function(arr){ // превращение массива в мапу
+				var result = {};
+				for(var i in arr) result[arr[i]] = true;
 				return result;
-			},
+			}
 			
 			// вспомогательные функции для определения классов
 			defineSettableOnce = function(base, name){
@@ -101,7 +114,7 @@ var lang = (function(){
 					if(this[get] && this[get]()) 
 						throw new util.DefinitionException(name + ' must not be redefined. Old ' + name + ': ' + this[get](), base);
 					return this[get] = function(){ return v }, this;
-				})(null);
+				}).call(base, null);
 			},
 			defineStorage = function(base, name, params, sortParam, filter){
 				var list = new UniqParamList(name, params), capName = capitalize(name), valsFunc = sortParam? 'sortedValues': 'values';
@@ -127,7 +140,7 @@ var lang = (function(){
 							return m? m.call(p): null;
 						}), this }
 					:function(v){ return (base[get] = function(){ return v }), this }
-				)(null);
+				).call(base, null);
 			};
 		
 		return {
@@ -142,8 +155,10 @@ var lang = (function(){
 			
 			capitalize: capitalize,
 			getterOf: getterOf, 
+			addSlashes: addSlashes,
 			
 			groupBy: groupBy,
+			invertArray: invertArray,
 			
 			defineGetSet: defineGetSet,
 			defineSettableOnce: defineSettableOnce,
@@ -192,6 +207,7 @@ var lang = (function(){
 				util.defineSettableOnce(token, 'priority');
 				util.defineSettableOnce(token, 'name');	
 				util.defineGetSet(token, 'parse', 'parent');
+				util.defineGetSet(token, 'sequence');
 				
 				(token.setParent = function(parent){
 					this.prototype = new parent();
@@ -204,10 +220,10 @@ var lang = (function(){
 				
 				token.isAbstract = function(){ return !this.getPriority() || !this.getParse() };
 				token.toString = function(){ return 't:' + this.getName() };
-				token.parse = function(iter, parsed, tokenizer){
+				token.parse = function(iter){
 					var parser = this.getParse();
-					if(!parser) throw new util.TokenizationException('dont know how to parse ' + token, iter.pos)
-					var content = parser.call(this || token, iter, parsed, tokenizer);
+					if(!parser) throw new util.TokenizationException('no parsing function supplied for ' + token, iter.pos)
+					var content = parser.call(this || token, iter);
 					return content === undefined? null: new (this || token)(content);
 				}
 				
@@ -217,7 +233,7 @@ var lang = (function(){
 				var lexem = function(content){
 					this.content = content = content || [];
 					var desc = this.getDescription();
-					if(content.length !== desc.length) 
+					if(content.length !== desc.length)
 						throw new util.AggregationException('could not form lexem of ' + content.length + ' parts: expected ' + desc.length + ' parts', lexem);
 					for(var i in desc){
 						var d = desc[i], c = content[i];
@@ -236,6 +252,8 @@ var lang = (function(){
 				util.defineGetSet(lexem, 'parsingCondition', 'parent');
 				util.defineGetSet(lexem, 'parse');
 				util.defineGetSet(lexem, 'isRightAssociative');
+				util.defineGetSet(lexem, 'sourcerFormatString', 'parent');
+				util.defineGetSet(lexem, 'translatorFormatString', 'parent');
 				
 				(lexem.setParent = function(parent){
 					this.prototype = new parent();
@@ -243,7 +261,10 @@ var lang = (function(){
 					this.prototype.getContent = function(){ return this.content; }
 					this.prototype.getDescription = function(){ return lexem.description; }
 					this.prototype.getTranslator = function(){ return lexem.getTranslator(); }
+					this.prototype.getSourcerFormatString = function(){ return lexem.getSourcerFormatString(); }
+					this.prototype.getTranslatorFormatString = function(){ return lexem.getTranslatorFormatString(); }
 					this.prototype.getSourcer = function(){ return lexem.getSourcer(); }
+					this.prototype.getDescription = function(){ return lexem.description; }
 					this.prototype.toString = function(tabs){ 
 						tabs = tabs || '';
 						var result = 'l:' + this.getName() + '(', desc = this.getDescription();
@@ -261,12 +282,12 @@ var lang = (function(){
 					},
 					this.prototype.sourcefy = function(){
 						var sourcer = this.getSourcer();
-						if(!sourcer) throw new util.CodeGenerationException('dont know how to sourcefy ' + this, this);
+						if(!sourcer) throw new util.CodeGenerationException('no sourcefication function supplied for ' + this, this);
 						return sourcer.call(this);
 					}
 					this.prototype.translate = function(){
 						var translator = this.getTranslator();
-						if(!translator) throw new util.CodeGenerationException('dont know how to translate ' + this, this);
+						if(!translator) throw new util.CodeGenerationException('no translation function supplied for ' + this, this);
 						return translator.call(this);
 					}
 					this.getParent = this.prototype.getParent = function(){ return parent };
@@ -280,7 +301,7 @@ var lang = (function(){
 				lexem.toString = function(){ return 'l:' + this.getName() };
 				lexem.parse = function(el, state){
 					var parse = this.getParse();
-					if(!parse) throw new util.AggregationException('dont know how to parse ' + this, this);
+					if(!parse) throw new util.AggregationException('no translation function supplied for ' + this, this);
 					return parse.call(this, el, state);
 				}
 				
@@ -289,7 +310,8 @@ var lang = (function(){
 				return lexem;
 			}
 			
-			
+		// изменяет состояние, если может; если не может - оставляет все как есть
+		// если изменил состояние - должен вернуть непустой ответ
 		var defaultLexemParser = (function(){
 			
 			var getRightAssociativeLexems = function(state, priority){ // вот это бы как-нибудь оптимизировать, некрасиво
@@ -307,10 +329,7 @@ var lang = (function(){
 						return p;
 			}
 			
-			var parse = function(el, state){
-				var cond = this.getParsingCondition(); // учитываем условие парсинга
-				if(cond && !cond.call(this, el, state)) return;
-				
+			var parse = function(el){
 				var content = [], n = el; // собираем контент; заодно получаем концевую ноду
 				for(var i in this.pattern){
 					if(!n || !(n.val instanceof this.pattern[i])) return;
@@ -318,28 +337,82 @@ var lang = (function(){
 					n = n.next;
 				}
 				
+				var cond = this.getParsingCondition(); // учитываем условие парсинга
+				if(cond && !cond.call(this, el)) return;
+
 				if(n && n.prev && this.getIsRightAssociative()) { // учитываем правоассоциативность
-					var rolexs = getRightAssociativeLexems(state, this.getPriority());
-					var parsed = parseForward(rolexs, n.prev, state);
+					var rolexs = getRightAssociativeLexems(el, this.getPriority());
+					var parsed = parseForward(rolexs, n.prev, el);
 					if(parsed) content[content.length - 1] = parsed;
 					el.next = n.prev.next;
-				} else {
-					el.next = n;
-					if(n) n.prev = el;
-				}
+				} else if(el.next = n) n.prev = el;
 				
-				return el.val = new this(content);
+				return el.val = new this(content)
 			};
 			
 			return parse;
 			
 		})();
+		var getDefaultFormatStringForLexem = function(lexem){
+			var result = [];
+			for(var i in lexem.description) result.push('$' + lexem.description[i].name);
+			return result.join(' ');
+		}
+		var populateFormatString = (function(){
+			
+			var iChars = util.invertArray("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789".split(''));
+			
+			var getIdentifier = function(str){
+				var i = 0;
+				while(iChars[str.charAt(i)]) i++;
+				return str.substr(0, i);
+			}
+			
+			var getIdentMap = function(desc){
+				var result = {};
+				for(var i in desc) result[desc[i].name] = i;
+				return result;
+			}
+			
+			return function(lexem, format, methodName){
+				
+				if(!format){
+					var result = [];
+					for(var i in lexem.content) result.push(lexem.content[i] instanceof Token? lexem.content[i].content: lexem.content[i][methodName]())
+					return result.join(' ');
+				}
+				format = format.split('$');
+				var result = '', imap = getIdentMap(lexem.getDescription());
+				result += format[0];
+				for(var i = 1; i < format.length; i++){
+					var ident = getIdentifier(format[i]);
+					if(ident in imap){
+						var ival = lexem.content[imap[ident]], rem = format[i].substr(ident.length);
+						if(ival instanceof Token) result += ival.content + rem;
+						else result += ival[methodName]() + rem;
+					} else result += '$' + format[i];
+				}
+				return result;
+			}
+			
+		})();
+		var defaultLexemSourcer = function(){ return populateFormatString(this, this.getSourcerFormatString(), 'sourcefy') }
+		var defaultLexemTranslator = function(){ return populateFormatString(this, this.getTranslatorFormatString(), 'translate') }
+		
+		util.defineGetSet(Lexem, 'sourcer');
+		util.defineGetSet(Lexem, 'translator');
+		util.defineGetSet(Lexem, 'parent');
+		
+		Lexem.setSourcer(defaultLexemSourcer);
+		Lexem.setTranslator(defaultLexemTranslator);
+		Lexem.setParent(null);
 		
 		var Tokenizer = function(){ 
 			util.defineStorage(this, 'token', ['name', 'priority'], 'priority', function(t){ return !t.isAbstract() });
 			util.defineStorage(this, 'group', ['name']);
 			util.defineStorage(this, 'postProcessor', ['name', 'priority'], 'priority');
 			util.defineStorage(this, 'preProcessor', ['name', 'priority'], 'priority');
+			this.tokenizer = this;
 		}
 		Tokenizer.prototype = {
 			tokenize:function(str, aggr){ 
@@ -361,139 +434,88 @@ var lang = (function(){
 			},
 			
 			doTokenize: function(code){
-				var parsed = [], iter = this.createIterator(code), tokens = this.getTokens();
+				var iter = this.createIterator(code), tokens = this.getTokens();
 				
 				while(iter.nend()){
-					var next = this.nextToken(parsed, iter, tokens);
+					var next = this.nextToken(iter, tokens);
 					if(!next) throw new util.TokenizationException("could not parse token", iter.pos);
-					parsed.push(next);
+					iter.parsed.push(next);
 				}
 				
-				return parsed;
+				return iter.parsed;
 			},
 			
 			createIterator: function(code){
 				var iter = new util.Striter(code), groups = this.groups.valuesBy('name');
+				iter.aggregator = this.aggregator;
+				iter.tokenizer = this;
+				iter.parsed = [];
 				for(var i in groups) iter.defineGroup(groups[i]);
 				return iter;
 			},
 			
-			nextToken:function(parsed, iter, tokens){
+			nextToken:function(iter, tokens){
 				for(var i in tokens){
-					var token = tokens[i].parse(iter, parsed, this);
+					var token = tokens[i].parse(iter);
 					if(token) return token;
 				}
 			}
 		};
 		
+		var getPrioritiesListOf = function(arr){
+			var map = {}, result = [];
+			for(var i in arr) map[arr[i].getPriority()] = arr[i].getPriority();
+			for(var i in map) result.push(parseInt(i));
+			return result.sort(function(a,b){ return b - a; });
+		}
 		var Aggregator = function(tokenizer){ 
 			this.tokenizer = tokenizer;
 			util.defineStorage(this, 'lexem', ['name'], 'priority', function(l){ return !l.isAbstract() });
 		}
 		Aggregator.prototype = {
 			aggregate:function(tokens){
-				var allLexems = this.getLexems();
-				var lexemsByPriority = util.groupBy(allLexems, 'priority');
-				var state = new State(tokens, this.tokenizer, this);
+				var allLexems = this.getLexems(),
+					lexemsByPriority = util.groupBy(allLexems, 'priority'),
+					priorities = getPrioritiesListOf(allLexems),
+				
+					state = new State(tokens, this.tokenizer, this), haveMatchInGroup;
 				
 				while(true){
-					var lexem = state.findMatchingLexem(allLexems);
-					if(!lexem) {
+					for(var i in priorities) if(haveMatchInGroup = state.tryMutate(lexemsByPriority[priorities[i]])) break;
+					
+					if(!haveMatchInGroup){
 						if(state.isMutatedCompletely()) return state.getMutationsResult();
 						else throw new util.AggregationException('could not find matching lexem', state);
 					}
-					state.mutate(lexemsByPriority[lexem.getPriority()]);
 				}
-			}
-		}
-		
-		var StateElement = function(val, tokenizer, aggregator){ this.val = val, this.tokenizer = tokenizer, this.aggregator = aggregator }
-		StateElement.prototype = {
-			matches: function(lexem, pos){
-				return !(this.val instanceof lexem.pattern[pos])? 
-							false:
-							pos === lexem.pattern.length - 1? 
-								true:
-								this.next?
-									this.next.matches(lexem, pos + 1) && (pos !== 0 || !lexem.getParsingCondition() || lexem.getParsingCondition()(this)):
-									false;
-			},
-			findMatchingIn: function(lexems){
-				for(var i in lexems) if(this.matches(lexems[i], 0)) return lexems[i];
-			},
-			haveMatchInChain: function(lexem){
-				return this.matches(lexem, 0)? 
-							true:
-							this.next?
-								this.next.haveMatchInChain(lexem):
-								false;
-			},
-			getAhead: function(count){
-				var res = this;
-				while(res && count--) res = res.next;
-				return res;
-			},
-			mutateAheadMultiple: function(lexems){
-				var aheadable = [], i;
-				/*
-				for(i in lexems)
-					if(lexems[i].getReverseLookaheadLength())
-						aheadable.push(lexems[i]);
-					*/	
-				if(!aheadable.length) return false;
-				
-				for(var i in aheadable){
-					var lexem = aheadable[i];
-					var ahead = this.getAhead(/*lexem.getReverseLookaheadLength()*/0);
-					if(!ahead || !ahead.findMatchingIn(aheadable)) continue;
-					if(!ahead.mutateAheadMultiple(aheadable))
-						ahead.mutateMultiple(aheadable)
-					return true;
-				}
-				return false;
-			},
-			mutate: function(lexem){ lexem.parse(this, {tokenizer:this.tokenizer, aggregator:this.aggregator}) },
-			mutateMultiple: function(lexems){
-				var lexem;
-				while(lexem = this.findMatchingIn(lexems)){
-					while(this.mutateAheadMultiple(lexems));
-					this.mutate(lexem);
-				}
-				if(this.next) this.next.mutateMultiple(lexems);
 			}
 		}
 		
 		var State = function(tokens, tokenizer, aggregator){
 			this.tokenizer = tokenizer, this.aggregator = aggregator;
-			var i = 0, l = tokens.length, el, newEl;
-			if(l === 0) return;
+			var i = 0, l, el, newEl;
+			if((l = tokens.length) === 0) return;
 			
-			this.first = el = new StateElement(tokens[0], tokenizer, aggregator);
-			while(++i < l){
-				newEl = new StateElement(tokens[i], tokenizer, aggregator);
-				el.next = newEl;
-				newEl.prev = el;
-				el = newEl;
-			}
+			this.first = el = this.createElement(tokens[0]);
+			while(++i < l) el = ((newEl = this.createElement(tokens[i])).prev = el).next = newEl;
 		}
 		State.prototype = {
-			findMatchingLexem: function(lexems){ 
-				for(var i in lexems)
-					if(this.haveMatch(lexems[i])) 
-						return lexems[i]; 
+			createElement: function(val){ return {val:val, tokenizer: this.tokenizer, aggregator:this.aggregator, state:this}; },
+			tryMutate: function(lexems){ 
+				var node = this.first, localResult, result;
+				while(true){
+					do{
+						for(var i in lexems)
+							if(result = (localResult = lexems[i].parse(node)) || result, localResult) break;
+					} while(localResult);
+					if(!(node = node.next)) return result;
+				}
 			},
-			haveMatch: function(lexem){ return this.first.haveMatchInChain(lexem); },
-			mutate: function(lexems){ this.first.mutateMultiple(lexems); },
-			isMutatedCompletely: function(){
-				return this.first && !this.first.next && this.first.val instanceof Lexem 
-			},
+			isMutatedCompletely: function(){ return this.first && !this.first.next && this.first.val instanceof Lexem },
 			getMutationsResult: function(){ return this.first.val; },
 			toString: function(){
 				var el = this.first, result = [];
-				while(el){
-					result.push(el.val + '');
-					el = el.next;
-				}
+				while(el) result.push(el.val.toString()), el = el.next;
 				return result.join(' ');
 			}
 		}
@@ -531,8 +553,7 @@ var lang = (function(){
 			CharacterGroup: CharacterGroup, 
 			Processor: Processor,
 			Aggregator: Aggregator, 
-			State: State, 
-			StateElement: StateElement,
+			State: State,
 			Lexem: Lexem,
 			
 			token: token,
@@ -597,9 +618,12 @@ var lang = (function(){
 			})();
 			
 			return function(name, word){
-				var parent = isIdentifier(word)? 'KeyWord': 'KeySequence';
-				var key = token(parent, name, generatePriorityForKey(word), null, false);
-				key.prototype.sequence = key.sequence = word;
+				var result = tokens[name] = ast.token()
+					.setParent(tokens[isIdentifier(word)? 'KeyWord': 'KeySequence'])
+					.setName(name)
+					.setPriority(generatePriorityForKey(word))
+					
+				result.prototype.sequence = result.sequence = word;
 				return key;
 			}
 			
@@ -610,154 +634,167 @@ var lang = (function(){
 				.setParent(parent? lexems[parent]: ast.Lexem)
 				.setName(name)
 				.setPriority(priority)
-				.setTranslator(toCode)
 				.setParsingCondition(condition)
-				//.setReverseLookaheadLength(reverseLookaheadLength);
 				.setIsRightAssociative(reverseLookaheadLength > 0);
 				
 			for(var i in patternWithNames)
 				for(var j in patternWithNames[i])
 					l.addPart(j, patternWithNames[i][j]);
 					
+			if(toCode) l.setTranslator(toCode);
+					
 			return l;
 		}
 		
-		var lexemsEndingWith = function(lexems, token){
-			var result = [];
-			for(var i in lexems){
-				var lexem =	lexems[i];
-				if(!lexem.isAbstract() && (token instanceof lexem.pattern[lexem.pattern.length - 1]))
-					result.push(lexem);
-			}
-			return result;
-		}
-		var lexemHaveAncestor = function(lexem, ancestor){
-			return !lexem? false:
-					lexem === ancestor? true:
-					lexemHaveAncestor(lexem.getParent(), ancestor);
-		}
-		var filterLexemByClass = function(lexems, cl){
-			var result = [];
-			for(var i in lexems)
-				if(lexemHaveAncestor(lexems[i], cl))
-					result.push(lexems[i]);
-			return result;
-		}
 		var duplicateUnaryOperatorAggregationCondition = function(priority){
-			var targetLexem = l.Expression;
+			
+			var filterLexemByClass = function(lexems, cl){
+				var result = [];
+				for(var i in lexems)
+					if(lexemHaveAncestor(lexems[i], cl))
+						result.push(lexems[i]);
+				return result;
+			}
+			
+			var lexemsEndingWith = function(lexems, token){
+				var result = [];
+				for(var i in lexems){
+					var lexem =	lexems[i];
+					if(!lexem.isAbstract() && (token instanceof lexem.pattern[lexem.pattern.length - 1]))
+						result.push(lexem);
+				}
+				return result;
+			}
+			
+			var lexemHaveAncestor = function(lexem, ancestor){
+				return !lexem? false:
+						lexem === ancestor? true:
+						lexemHaveAncestor(lexem.getParent(), ancestor);
+			}
+			
 			return function(el){
 				if(!el.prev) return true;
 				if(el.prev.val instanceof ast.Lexem) return false;
 				
 				var possibleLexems = lexemsEndingWith(el.aggregator.getLexems(), el.prev.val);
-				var expressionLexems = filterLexemByClass(possibleLexems, targetLexem);
+				var expressionLexems = filterLexemByClass(possibleLexems, l.Expression);
 				
 				return expressionLexems.length === 0; 
 			};
 		}
 		
-		token(null, 'TrashToken');
-		token('TrashToken', 'Space', 0x80000000, function(iter){ return iter.sequenceInGroup('space') || undefined; });
-		token('TrashToken', 'Comment');
-		token('Comment', 'OneLineComment', 0x80000001, function(iter){
-			if(!iter.have('//')) return;
-			iter.inc(2);
-			return iter.sequenceNotInGroup('newline');
-		});
-		token('Comment', 'MultiLineComment', 0x80000002, function(iter){
-			if(!iter.have('/*')) return;
-			iter.inc(2);
-			var result = '';
-			while(iter.nend() && !iter.have('*/')) result += iter.gin();
-			if(iter.end()) throw new util.TokenizationException('multiline comment have no end', iter.pos);
-			iter.inc(2);
-			return result;
-		});
-		token(null, 'Key'); // некая константная последовательность символов
-		token('Key', 'KeyWord', null, function(iter, parsed, tokenizer){
-			return iter.have(this.sequence) && !groups.identifier.have(iter.get(this.sequence.length))? 
-				(iter.inc(this.sequence.length), this.sequence): 
-				undefined;
-		}, true);
-		token('Key', 'KeySequence', null, function(iter, parsed, tokenizer){
-			return iter.have(this.sequence)? (iter.inc(this.sequence.length), this.sequence): undefined;
-		}, true);
-		token(null, 'Identifier', 9000, function(iter){ 
-			if(!iter.charIn('identifierStart')) return;
-			var result = '';
-			while(iter.charIn('identifier')) result += iter.gin();
-			return result;
-		}); 
-		token(null, 'Literal');
-		token('Literal', 'String', 8000, function(iter){
-			var startChar = iter.get(), escaped = false, result = '', char;
-			if(startChar !== '"' && startChar !== "'") return;
-
-			while(iter.nend()){
-				char = iter.ing()
-
-				if(escaped) {
-					escaped = false;
-					switch(char){
-						case 'n': result += '\n'; continue;
-						case 'r': result += '\r'; continue;
-						case 't': result += '\t'; continue;
-						case 'b': result += '\b'; continue;
-						case 'f': result += '\f'; continue;
-						case 'O': result += '\O'; continue;
-						case 'v': result += '\v'; continue;
-						default: result += char; continue;
-					} 
+		var tokenTree = {
+			TrashToken: {
+				Space: {priority: 0x80000000, parse: function(iter){ return iter.sequenceInGroup('space') || undefined; }},
+				Comment: {
+					OneLineComment: {priority: 0x80000001, parse: function(iter){
+						if(!iter.have('//')) return;
+						iter.inc(2);
+						return iter.sequenceNotInGroup('newline');
+					}},
+					MultiLineComment: {priority: 0x80000002, parse: function(iter){
+						if(!iter.have('/*')) return;
+						iter.inc(2);
+						var result = '';
+						while(iter.nend() && !iter.have('*/')) result += iter.gin();
+						if(iter.end()) throw new util.TokenizationException('multiline comment have no end', iter.pos);
+						iter.inc(2);
+						return result;
+					}}
 				}
-				else if(char === '\\') escaped = true;
-				else if(char === startChar) {
-					iter.inc();
-					break;
-				} else result += char;
-			}
-			
-			if(char !== startChar) throw new util.TokenizationException("string have opening quote, but have no closing one", iter.pos);
-
-			return result;
-		});
-		token('Literal', 'Number', 8001, (function(){
-			
-			var zero = '0'.charCodeAt(0), a = 'a'.charCodeAt(0) - 10;
-			
-			var intOf = function(str, mult){
-				var l = str.length, i, res = 0, c;
-				for(i = 0; i < l; i++) res = (res * mult) + (str.charCodeAt(i) - (groups.digits.have(str.charAt(i))? zero: a));
-				return res;
-			}
-			
-			var fractOf = function(str){
-				var l = str.length, i, res = 0, div = 1;
-				for(i = 0; i < l; i++) div *= 10, res += (str.charCodeAt(i) - zero) / div;
-				return res;
-			}
-			
-			return function(iter){
-				var char = iter.get();
-				if(!groups.digits.have(char)) return;
-				
-				var result = 0, startPart = iter.sequenceInGroup('digits');
-				
-				if(char === '0'){
-					if(startPart.length === 1){
-						switch(iter.get()){
-							case 'x': return iter.inc(), intOf(iter.sequenceInGroup('hexDigits'), 16);
-							case 'b': return iter.inc(), intOf(iter.sequenceInGroup('binDigits'), 2);
-							case '.': return iter.inc(), intOf(startPart, 10) + fractOf(iter.sequenceInGroup('digits'));
-							default: return 0;
-						}
+			},
+			Key: {
+				KeyWord: { parse: function(iter, parsed, tokenizer){
+						return iter.have(this.sequence) && !groups.identifier.have(iter.get(this.sequence.length))? 
+							(iter.inc(this.sequence.length), this.sequence): 
+							undefined;
 					}
-					if(groups.octDigits.isMakingUp(startPart)) return intOf(startPart, 8);
+				},
+				KeySequence: { parse: function(iter, parsed, tokenizer){
+						return iter.have(this.sequence)? (iter.inc(this.sequence.length), this.sequence): undefined;
+					}
 				}
-				return intOf(startPart, 10) + ((iter.get() === '.')? (iter.inc(), fractOf(iter.sequenceInGroup('digits'))): 0);
+			},
+			Identifier: { priority: 9000, parse: function(iter){ 
+					if(!iter.charIn('identifierStart')) return;
+					var result = '';
+					while(iter.charIn('identifier')) result += iter.gin();
+					return result;
+				} 
+			},
+			Literal:{
+				String: { priority: 8000, parse: function(iter){
+						var startChar = iter.get(), escaped = false, result = '', char;
+						if(startChar !== '"' && startChar !== "'") return;
+
+						while(iter.nend()){
+							char = iter.ing()
+
+							if(escaped) {
+								escaped = false;
+								switch(char){
+									case 'n': result += '\n'; continue;
+									case 'r': result += '\r'; continue;
+									case 't': result += '\t'; continue;
+									case 'b': result += '\b'; continue;
+									case 'f': result += '\f'; continue;
+									case 'O': result += '\O'; continue;
+									case 'v': result += '\v'; continue;
+									default: result += char; continue;
+								}
+							}
+							else if(char === '\\') escaped = true;
+							else if(char === startChar) {
+								iter.inc();
+								break;
+							} else result += char;
+						}
+						
+						if(char !== startChar) throw new util.TokenizationException("string have opening quote, but have no closing one", iter.pos);
+
+						return result;
+					} 
+				},
+				Number: { priority: 8001, parse: (function(){
+						
+						var zero = '0'.charCodeAt(0), a = 'a'.charCodeAt(0) - 10;
+						
+						var intOf = function(str, mult){
+							var l = str.length, i, res = 0, c;
+							for(i = 0; i < l; i++) res = (res * mult) + (str.charCodeAt(i) - (groups.digits.have(str.charAt(i))? zero: a));
+							return res;
+						}
+						
+						var fractOf = function(str){
+							var l = str.length, i, res = 0, div = 1;
+							for(i = 0; i < l; i++) div *= 10, res += (str.charCodeAt(i) - zero) / div;
+							return res;
+						}
+						
+						return function(iter){
+							var char = iter.get();
+							if(!groups.digits.have(char)) return;
+							
+							var result = 0, startPart = iter.sequenceInGroup('digits');
+							
+							if(char === '0'){
+								if(startPart.length === 1){
+									switch(iter.get()){
+										case 'x': return iter.inc(), intOf(iter.sequenceInGroup('hexDigits'), 16);
+										case 'b': return iter.inc(), intOf(iter.sequenceInGroup('binDigits'), 2);
+										case '.': return iter.inc(), intOf(startPart, 10) + fractOf(iter.sequenceInGroup('digits'));
+										default: return 0;
+									}
+								}
+								if(groups.octDigits.isMakingUp(startPart)) return intOf(startPart, 8);
+							}
+							return intOf(startPart, 10) + ((iter.get() === '.')? (iter.inc(), fractOf(iter.sequenceInGroup('digits'))): 0);
+						}
+					})()
+				}
 			}
-		})());
-		
-		var keys = {
+		}
+		var keyTree = {
 			Plus: '+', Minus: '-', Asterisk: '*', Slash: '/', Percent: '%',
 			Tilde: '~', Ampersand: '&', Obelisk: '|', Circumflex: '^',
 			Comma: ',', Point: '.', Question: '?', Colon: ':', Semicolon: ';',
@@ -790,137 +827,154 @@ var lang = (function(){
 			In: 'in',
 			Instanceof: 'instanceof'
 		};
-		for(var keyName in keys) key(keyName, keys[keyName]);
 		
-		lexem(null, 'Expression');
-		lexem('Expression', 'Literal');
-		lexem('Literal', 'String', 8000, [{value:t.String}], function(){ 
-			return '"' + this.value.content
-					.replace('\\', '\\\\')
-					.replace('"', '\\"')
-					.replace("'", "\\'")
-					.replace('\n', '\\n')
-					.replace('\r', '\\r')
-					.replace('\b', '\\b')
-					.replace('\f', '\\f')
-					.replace('\O', '\\O')
-					.replace('\t', '\\t')
-					.replace('\v', '\\v')
-					+ '"'; 
-		});
-		lexem('Literal', 'Number', 8000, [{value:t.Number}], function(){ return this.value.content.toString(); });
-		lexem('Literal', 'Boolean');
-		lexem('Boolean', 'True', 8000, [{value:t.True}], function(){ return 'true' });
-		lexem('Boolean', 'False', 8000, [{value:t.False}], function(){ return 'false' });
-		lexem('Literal', 'Undefined', 8000, [{value:t.Undefined}], function(){ return 'undefined' });
-		lexem('Literal', 'Null', 8000, [{value:t.Null}], function(){ return 'null' });
+		(function(){
+			
+			var token = function(name, desc, parent){
+				var result = tokens[name] = ast.token().setName(name).setParent(parent);
+				for(var i in desc)
+					switch(i){
+						case 'priority': result.setPriority(desc.priority); continue;
+						case 'parse': result.setParse(desc.parse); continue;
+						default: token(i, desc[i], result); continue;
+					}
+			}
+			
+			for(var i in tokenTree) token(i, tokenTree[i], ast.Token);
+			for(var i in keyTree) key(i, keyTree[i]);
+		})();
 		
-		lexem('Expression', 'Identifier');
-		lexem('Identifier', 'SingleIdentifier', 7999, [{value:t.Identifier}], function(){ return this.value.content.toString(); })
-		lexem('Identifier', 'IdentifierChain');
-		lexem('IdentifierChain', 'CommonIdentifierChain', 900, [{left:l.Expression}, {sign:t.Point}, {right:l.Identifier}], function(){
-			return this.left.translate() + '.' + this.right.translate();
-		});
-		lexem('IdentifierChain', 'KeyWordIdentifierChain', 900, [{left:l.Expression}, {sign:t.Point}, {right:t.KeyWord}], function(){
-			return this.left.translate() + '.' + this.right.content;
-		});
+		var stringSourcerTranslator = function(){ return '"' + util.addSlashes(this.value.content) + '"'; };
 		
-		var typicalBinOpCodeGen = function(){ return '(' + this.left.translate() + this.sign.content + this.right.translate() + ')'; },
-			typicalTernOpCodeGen = function(){ return '(' + 
-				this.first.translate() + 
-				this.leftSign.content + 
-				this.second.translate() + 
-				this.rightSign.content + 
-				this.third.translate() + ')'; },
-			typicalPrefixOpCodeGen = function(){ return '(' + this.sign.content + this.operand.translate() + ')' },
-			typicalPostfixOpCodeGen = function(){ return '(' + this.operand.translate() + this.sign.content + ')' };
+		var lexemTree = {
+			Expression: {
+				Literal: {
+					String: {pr: 8000, pat: "value:t:String", sf: stringSourcerTranslator, tf: stringSourcerTranslator},
+					Number: {pr: 8000, pat: "value:t:Number" },
+					Boolean: {
+						True: {pr: 8000, pat: "value:t:True" },
+						False: {pr: 8000, pat: "value:t:False" }
+					},
+					Undefined: {pr: 8000, pat: "value:t:Undefined" },
+					Null: {pr: 8000, pat: "value:t:Null" }
+				},
+				Identifier: {
+					SingleIdentifier: {pr: 7999, pat: "value:t:Identifier" },
+					IdentifierChain: {
+						CommonIdentifierChain: {pr: 900, pat: "left:l:Expression sign:t:Point right:l:Identifier", t:"$left.$right" },
+						KeyWordIdentifierChain: {pr: 900, pat: "left:l:Expression sign:t:Point right:t:KeyWord", t:"$left.$right" },
+						
+					}
+				},
+				Operator: {
+					UnaryOperator:{
+						UnaryPrefixOperator:{ t:"($sign$operand)",
+							PrefixIncrement: {pr: 800, pat: "sign:t:DoublePlus operand:l:Identifier" },
+							PrefixDecrement: {pr: 800, pat: "sign:t:DoubleMinus operand:l:Identifier" },
+							BitwiseNot: {pr: 800, pat: "sign:t:Tilde operand:l:Expression" },
+							LogicalNot: {pr: 800, pat: "sign:t:Exclamation operand:l:Expression" },
+							Typeof: {pr: 800, pat: "sign:t:Typeof operand:l:Expression", t:"(typeof($operand))"},
+							Delete: {pr: 800, pat: "sign:t:Delete operand:l:Identifier", t:"(delete $operand)"},
+							UnaryMinus: {pr: 800, pat: "sign:t:Minus operand:l:Expression", cond: duplicateUnaryOperatorAggregationCondition(800)},
+							UnaryPlus: {pr: 800, pat: "sign:t:Plus operand:l:Expression", cond: duplicateUnaryOperatorAggregationCondition(800)}
+						},
+						UnaryPostfixOperator: { t: "($operand$sign)",
+							PostfixIncrement: {pr: 850, pat: "operand:l:Identifier sign:t:DoublePlus"},
+							PostfixDecrement: {pr: 850, pat: "operand:l:Identifier sign:t:DoubleMinus"}
+						}
+					},
+					BinaryOperator:{t:"($left$sign$right)",
+						Comma: { pr: 100, pat: "left:l:Expression sign:t:Comma right:l:Expression"},
+						Assignment: {pr: 200, pat: "left:l:Identifier sign:t:Equals right:l:Expression", ra:true},
+						AdditionAssignment: {pr: 200, pat: "left:l:Identifier sign:t:PlusEquals right:l:Expression", ra:true},
+						SubtractionAssignment: {pr: 200, pat: "left:l:Identifier sign:t:MinusEquals right:l:Expression", ra:true},
+						ExponentiationAssignment: {pr: 200, pat: "left:l:Identifier sign:t:DoubleAsteriskEquals right:l:Expression", ra:true},
+						MultiplicationAssignment: {pr: 200, pat: "left:l:Identifier sign:t:AsteriskEquals right:l:Expression", ra:true},
+						DivisionAssignment: {pr: 200, pat: "left:l:Identifier sign:t:SlashEquals right:l:Expression", ra:true},
+						RemainderAssignment: {pr: 200, pat: "left:l:Identifier sign:t:PercentEquals right:l:Expression", ra:true},
+						ShiftLeftAssignment: {pr: 200, pat: "left:l:Identifier sign:t:DoubleLesserEquals right:l:Expression", ra:true},
+						ShiftRightAssignment: {pr: 200, pat: "left:l:Identifier sign:t:DoubleGreaterEquals right:l:Expression", ra:true},
+						UnsignedShiftRightAssignment: {pr: 200, pat: "left:l:Identifier sign:t:TripleGreaterEquals right:l:Expression", ra:true},
+						BitwiseAndAssignment: {pr: 200, pat: "left:l:Identifier sign:t:AmpersandEquals right:l:Expression", ra:true},
+						BitwiseXorAssignment: {pr: 200, pat: "left:l:Identifier sign:t:CircumflexEquals right:l:Expression", ra:true},
+						BitwiseOrAssignment: {pr: 200, pat: "left:l:Identifier sign:t:ObeliskEquals right:l:Expression", ra:true},
+						
+						LogicalOr: {pr: 300, pat: "left:l:Expression sign:t:DoubleObelisk right:l:Expression" },
 		
-		lexem('Expression', 'Operator');
-		lexem('Operator', 'BinaryOperator', null, null, typicalBinOpCodeGen);
-		lexem('Operator', 'TernaryOperator', null, null, typicalTernOpCodeGen);
-		lexem('Operator', 'UnaryOperator');
-		lexem('UnaryOperator', 'PrefixUnaryOperator', null, null, typicalPrefixOpCodeGen);
-		lexem('UnaryOperator', 'PostfixUnaryOperator', null, null, typicalPostfixOpCodeGen);
+						LogicalAnd: {pr: 350, pat: "left:l:Expression sign:t:DoubleAmpersand right:l:Expression" },
+								
+						BitwiseOr: {pr: 400, pat: "left:l:Expression sign:t:Obelisk right:l:Expression" },
+								
+						BitwiseXor: {pr: 450, pat: "left:l:Expression sign:t:Circumflex right:l:Expression" },
+								
+						BitwiseAnd: {pr: 500, pat: "left:l:Expression sign:t:Ampersand right:l:Expression" },
+								
+						Equality: {pr: 550, pat: "left:l:Expression sign:t:DoubleEquals right:l:Expression" },
+						StrictEquality: {pr: 550, pat: "left:l:Expression sign:t:TripleEquals right:l:Expression" },
+						Inequality: {pr: 550, pat: "left:l:Expression sign:t:ExclamationEquals right:l:Expression" },
+						StrictInequality: {pr: 550, pat: "left:l:Expression sign:t:ExclamationDoubleEquals right:l:Expression" },
+								
+						In: {pr: 600, pat: "left:l:Expression sign:t:In right:l:Expression", t:"($left in $right)"},
+						Instanceof: {pr: 600, pat: "left:l:Expression sign:t:Instanceof right:l:Expression", t:"($left instanceof $right)"},
+						Less: {pr: 600, pat: "left:l:Expression sign:t:Lesser right:l:Expression" },
+						LessOrEqual: {pr: 600, pat: "left:l:Expression sign:t:LesserOrEquals right:l:Expression" },
+						Greater: {pr: 600, pat: "left:l:Expression sign:t:Greater right:l:Expression" },
+						GreaterOrEqual: {pr: 600, pat: "left:l:Expression sign:t:GreaterOrEquals right:l:Expression" },
+								
+						LeftShift: {pr: 650, pat: "left:l:Expression sign:t:DoubleLesser right:l:Expression" },
+						RightShift: {pr: 650, pat: "left:l:Expression sign:t:DoubleGreater right:l:Expression" },
+						UnsignedRightShift: {pr: 650, pat: "left:l:Expression sign:t:TripleGreater right:l:Expression" },
+								
+						Addition: {pr: 700, pat: "left:l:Expression sign:t:Plus right:l:Expression" },
+						Subtraction: {pr: 700, pat: "left:l:Expression sign:t:Minus right:l:Expression" },
+								
+						Multiplication: {pr: 750, pat: "left:l:Expression sign:t:Asterisk right:l:Expression" },
+						Division: {pr: 750, pat: "left:l:Expression sign:t:Slash right:l:Expression" },
+						Remainder: {pr: 750, pat: "left:l:Expression sign:t:Percent right:l:Expression" },
+						Exponentiation: {pr: 750, pat: "left:l:Expression sign:t:DoubleAsterisk right:l:Expression", ra: true}
+					},
+					TernaryOperator:{t:"($first$leftSign$second$rightSign$third)",
+						ConditionalOperator: { pr: 150, pat: "first:l:Expression leftSign:t:Question second:l:Expression rightSign:t:Colon third:l:Expression", ra:true}
+					}
+				},
+				Parenthesis: {pr:1500, pat: "left:t:LeftParenthesis body:l:Expression right:t:RightParenthesis", t:"($body)"}
+			}
+		};
 		
-		lexem('BinaryOperator', 'Comma', 100, [{left:l.Expression}, {sign:t.Comma}, {right:l.Expression}]);
-		
-		lexem('TernaryOperator', 'ConditionalOperator', 150, [{first:l.Expression}, {leftSign:t.Question}, {second:l.Expression}, {rightSign:t.Colon}, {third:l.Expression}], null, false, 4);
-		
-		lexem('BinaryOperator', 'Assignment', 200, [{left:l.Identifier}, {sign:t.Equals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'AdditionAssignment', 200, [{left:l.Identifier}, {sign:t.PlusEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'SubtractionAssignment', 200, [{left:l.Identifier}, {sign:t.MinusEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'ExponentiationAssignment', 200, [{left:l.Identifier}, {sign:t.DoubleAsteriskEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'MultiplicationAssignment', 200, [{left:l.Identifier}, {sign:t.AsteriskEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'DivisionAssignment', 200, [{left:l.Identifier}, {sign:t.SlashEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'RemainderAssignment', 200, [{left:l.Identifier}, {sign:t.PercentEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'ShiftLeftAssignment', 200, [{left:l.Identifier}, {sign:t.DoubleLesserEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'ShiftRightAssignment', 200, [{left:l.Identifier}, {sign:t.DoubleGreaterEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'UnsignedShiftRightAssignment', 200, [{left:l.Identifier}, {sign:t.TripleGreaterEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'BitwiseAndAssignment', 200, [{left:l.Identifier}, {sign:t.AmpersandEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'BitwiseXorAssignment', 200, [{left:l.Identifier}, {sign:t.CircumflexEquals}, {right:l.Expression}], null, false, 2);
-		lexem('BinaryOperator', 'BitwiseOrAssignment', 200, [{left:l.Identifier}, {sign:t.ObeliskEquals}, {right:l.Expression}], null, false, 2);
-		
-		lexem('BinaryOperator', 'LogicalOr', 300, [{left:l.Expression}, {sign:t.DoubleObelisk}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'LogicalAnd', 350, [{left:l.Expression}, {sign:t.DoubleAmpersand}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'BitwiseOr', 400, [{left:l.Expression}, {sign:t.Obelisk}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'BitwiseXor', 450, [{left:l.Expression}, {sign:t.Circumflex}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'BitwiseAnd', 500, [{left:l.Expression}, {sign:t.Ampersand}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'Equality', 550, [{left:l.Expression}, {sign:t.DoubleEquals}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'StrictEquality', 550, [{left:l.Expression}, {sign:t.TripleEquals}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'Inequality', 550, [{left:l.Expression}, {sign:t.ExclamationEquals}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'StrictInequality', 550, [{left:l.Expression}, {sign:t.ExclamationDoubleEquals}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'In', 600, [{left:l.Expression}, {sign:t.In}, {right:l.Expression}],
-			function(){ return '('  + this.left.translate() + ' in ' + this.right.translate() + ')'});
-		lexem('BinaryOperator', 'Instanceof', 600, [{left:l.Expression}, {sign:t.Instanceof}, {right:l.Expression}],
-			function(){ return '('  + this.left.translate() + ' instanceof ' + this.right.translate() + ')'});
-		lexem('BinaryOperator', 'Less', 600, [{left:l.Expression}, {sign:t.Lesser}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'LessOrEqual', 600, [{left:l.Expression}, {sign:t.LesserOrEquals}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'Greater', 600, [{left:l.Expression}, {sign:t.Greater}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'GreaterOrEqual', 600, [{left:l.Expression}, {sign:t.GreaterOrEquals}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'LeftShift', 650, [{left:l.Expression}, {sign:t.DoubleLesser}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'RightShift', 650, [{left:l.Expression}, {sign:t.DoubleGreater}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'UnsignedRightShift', 650, [{left:l.Expression}, {sign:t.TripleGreater}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'Addition', 700, [{left:l.Expression}, {sign:t.Plus}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'Subtraction', 700, [{left:l.Expression}, {sign:t.Minus}, {right:l.Expression}]);
-		
-		lexem('BinaryOperator', 'Multiplication', 750, [{left:l.Expression}, {sign:t.Asterisk}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'Division', 750, [{left:l.Expression}, {sign:t.Slash}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'Remainder', 750, [{left:l.Expression}, {sign:t.Percent}, {right:l.Expression}]);
-		lexem('BinaryOperator', 'Exponentiation', 750, [{left:l.Expression}, {sign:t.DoubleAsterisk}, {right:l.Expression}], null, false, 2);
-		
-		lexem('PrefixUnaryOperator', 'PrefixIncrement', 800, [{sign:t.DoublePlus}, {operand:l.Identifier}]);
-		lexem('PrefixUnaryOperator', 'PrefixDecrement', 800, [{sign:t.DoubleMinus}, {operand:l.Identifier}]);
-		lexem('PrefixUnaryOperator', 'BitwiseNot', 800, [{sign:t.Tilde}, {operand:l.Expression}]);
-		lexem('PrefixUnaryOperator', 'LogicalNot', 800, [{sign:t.Exclamation}, {operand:l.Expression}]);
-		lexem('PrefixUnaryOperator', 'Typeof', 800, [{sign:t.Typeof}, {operand:l.Expression}], 
-			function(){ return '(typeof(' + this.operand.translate() + '))'});
-		lexem('PrefixUnaryOperator', 'Delete', 800, [{sign:t.Delete}, {operand:l.Identifier}], 
-			function(){ return '(delete ' + this.operand.translate() + ')' });
-		lexem('PrefixUnaryOperator', 'UnaryMinus', 800, [{sign:t.Minus}, {operand:l.Expression}], null, false, 0, duplicateUnaryOperatorAggregationCondition(800));
-		lexem('PrefixUnaryOperator', 'UnaryPlus', 800, [{sign:t.Plus}, {operand:l.Expression}], null, false, 0, duplicateUnaryOperatorAggregationCondition(800));
-		
-		lexem('PostfixUnaryOperator', 'PostfixIncrement', 850, [{operand:l.Identifier}, {sign:t.DoublePlus}]);
-		lexem('PostfixUnaryOperator', 'PostfixDecrement', 850, [{operand:l.Identifier}, {sign:t.DoubleMinus}]);
-		
-		lexem('Expression','Parenthesis', 1500, [{left: t.LeftParenthesis}, {body:l.Expression}, {right: t.RightParenthesis}], 
-			function(){ return '(' + this.body.translate() + ')'; })
+		(function(){
+			
+			var lexem = function(name, desc, parent){
+				var result = lexems[name] = ast.lexem().setName(name).setParent(parent);
+				for(var i in desc)
+					switch(i){
+						case 'pr': result.setPriority(desc.pr); continue;
+						case 'pat': 
+							var parts = desc.pat.split(' ');
+							for(var i in parts){
+								var sp = parts[i].split(':');
+								result.addPart(sp[0], (sp[1] === 'l'?l:t)[sp[2]]);
+							}
+							continue;
+						case 'tf': result.setTranslator(desc.tf); continue;
+						case 'sf': result.setSourcer(desc.tf); continue;
+						case 't': result.setTranslatorFormatString(desc.t); continue;
+						case 'ra': result.setIsRightAssociative(desc.ra); continue;
+						case 'cond': result.setParsingCondition(desc.cond); continue;
+						default: lexem(i, desc[i], result); continue;
+					}
+			}
+			
+			for(var i in lexemTree) lexem(i, lexemTree[i], ast.Lexem);
+		})();
 		
 		var tokenizerPostProcessors = [
 			processor('removeTrashTokens', 100,function(t){
-			var result = [];
-			for(var i in t)
-				if(!(t[i] instanceof tokens.TrashToken))
-					result.push(t[i]);
-			return result;
-		})
+				var result = [];
+				for(var i in t)
+					if(!(t[i] instanceof tokens.TrashToken))
+						result.push(t[i]);
+				return result;
+			})
 		]
 	
 		return {

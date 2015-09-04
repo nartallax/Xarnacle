@@ -70,16 +70,17 @@
 			}
 
 			var getTestResult = function(str){
-				var tokens, ex, tree, code;
+				var tokens, ex, tree, code, source;
 				try {
 					var tokensArr = lang.tokenize(str)
 					tokens = tokensArr.join('\n');
 					tree = lang.aggregate(tokensArr);
 					code = tree.translate();
+					source = tree.sourcefy();
 				} catch(e){
 					ex = e;
 				}
-				return {lexems: tree, tokens: tokens, exception: ex, code: code};
+				return {lexems: tree, tokens: tokens, exception: ex, code: code, source: source};
 			}
 
 			var runDetailed = function(str){
@@ -125,6 +126,7 @@
 				addBlock('Tokens', result.tokens);
 				addBlock('Lexem tree', result.lexems);
 				addBlock('Result code', result.code || (result.exception? (result.exception.stack || result.exception): ''));
+				addBlock('Reversed source', result.source);
 
 				if(result.exception) {
 					lastException = result.exception;
@@ -159,10 +161,10 @@
 						tda = document.createElement('td');
 						tdb = document.createElement('td')
 
-						var result = getTestResult(tests[i].source);
-						tda.textContent = tests[i].source;
+						var result = getTestResult(tests[i].code);
+						tda.textContent = tests[i].code;
 						tdb.textContent = result.code;
-						if(tests[i].result === result.code){
+						if(tests[i].result === result.code && tests[i].source === result.source){
 							success++;
 							tr.className = 'success';
 						} else {
@@ -170,7 +172,7 @@
 						}
 
 						tr.onclick = (function(){
-							var source = tests[i].source
+							var source = tests[i].code
 							return function(){ window.location.hash = source; }
 						})();
 
