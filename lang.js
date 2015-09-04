@@ -1,5 +1,5 @@
 var lang = (function(){
-
+	'use strict';
 	var util = (function(){ // различные мелочи
 		
 		var Striter = function(str){ this.str = str, this.pos = 0, defineStorage(this, 'group', ['name']); };
@@ -104,7 +104,7 @@ var lang = (function(){
 				var result = {};
 				for(var i in arr) result[arr[i]] = true;
 				return result;
-			}
+			},
 			
 			// вспомогательные функции для определения классов
 			defineSettableOnce = function(base, name){
@@ -210,13 +210,14 @@ var lang = (function(){
 				util.defineGetSet(token, 'sequence');
 				
 				(token.setParent = function(parent){
+					console.trace();
 					this.prototype = new parent();
 					this.prototype.getName = function(){ return token.getName(); }
 					this.prototype.getContent = function(){ return this.content; }
 					this.prototype.toString = function(){ return 't:' + this.getName() + '(' + this.content + ')'; },
 					this.getParent = this.prototype.getParent = function(){ return parent };
 					return this;
-				})(Token);
+				}).call(token, Token);
 				
 				token.isAbstract = function(){ return !this.getPriority() || !this.getParse() };
 				token.toString = function(){ return 't:' + this.getName() };
@@ -292,7 +293,7 @@ var lang = (function(){
 					}
 					this.getParent = this.prototype.getParent = function(){ return parent };
 					return this;
-				})(Lexem);
+				}).call(lexem, Lexem);
 				
 				lexem.addPart = function(name, cls){ return this.pattern.push(cls), this.description.push({name:name, cls: cls}), this; }
 				lexem.isAbstract = function(){ return this.pattern.length < 1 }
