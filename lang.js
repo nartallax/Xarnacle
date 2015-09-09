@@ -25,23 +25,20 @@ var lang = (function(){
 		// коллекция; значения указанных параметров уникальны для каждого элемента этой коллекции
 		var UniqParamList = function(name, params, defaultParam, sortParam){ 
 			this.name = name, this.params = params, this.defaultParam = defaultParam || params[0], this.sortParam = defaultParam || params[params.length - 1];
-			this.getters = [], this.lists = {};
-			for(var i in params) {
-				this.getters[params[i]] = getterOf(params[i]);
-				this.lists[params[i]] = {};
-			}
+			this.lists = {};
+			for(var i in params) this.lists[params[i]] = {};
 		}
 		UniqParamList.prototype = {
 			add: function(val){
 				for(var i in this.params){
-					var pName = this.params[i], pVal = val[this.getters[pName]]();
-					if(this.lists[pName][pVal])
+					var pName = this.params[i];
+					if(this.lists[pName][val[pName]])
 						throw new util.DefinitionException('failed to define ' + this.name + ' with ' + pName + ' "' + name + '": another ' + this.name + ' is already defined with this ' + pName, val);
 				}
 				
 				for(var i in this.params){
-					var pName = this.params[i], pVal = val[this.getters[pName]]();
-					this.lists[pName][pVal] = val;
+					var pName = this.params[i];
+					this.lists[pName][val[pName]] = val;
 				}
 				
 				return this;
@@ -52,15 +49,15 @@ var lang = (function(){
 				if(!val) throw new util.DefinitionException('failed to undefine ' + this.name + ' with ' + keyParam + ' "' + key + '": ' + this.name + ' not found', null);
 				for(var i in this.params){
 					var pName = this.params[i];
-					delete this.lists[pName][val[this.getters[pName]]()];
+					delete this.lists[pName][val[pName]];
 				}
 				return this;
 			},
 			sortedValues: function(reverse, sortParam){
-				var getter = this.getters[sortParam || this.sortParam] || getterOf(sortParam || this.sortParam),
-					inc = reverse? 1: -1,
+				sortParam = sortParam || this.sortParam;
+				var inc = reverse? 1: -1,
 					dec = reverse? -1: 1,
-					compare = function(a, b){ return b = b[getter](), a = a[getter](), a > b? inc: b > a? dec: 0 };
+					compare = function(a, b){ return b = b[sortParam], a = a[sortParam], a > b? inc: b > a? dec: 0 };
 				
 				return this.values().sort(compare);
 			},
@@ -79,7 +76,6 @@ var lang = (function(){
 		
 			// строковые операции
 		var capitalize = function(str){ return str.substr(0, 1).toUpperCase() + str.substr(1); },
-			getterOf = function(paramName){ return 'get' + capitalize(paramName) },
 			addSlashes = function(str){
 				return str
 					.replace('\\', '\\\\')
@@ -96,8 +92,8 @@ var lang = (function(){
 			
 			// операции с коллекциями
 			groupBy = function(data, param){
-				var result = {}, param = getterOf(param), val, pval;
-				for(var i in data) val = data[i], pval = val[param](), result[pval]? result[pval].push(val): result[pval] = [val];
+				var result = {}, val, pval;
+				for(var i in data) val = data[i], pval = val[param], result[pval]? result[pval].push(val): result[pval] = [val];
 				return result;
 			},
 			invertArray = function(arr){ // превращение массива в мапу
@@ -106,16 +102,6 @@ var lang = (function(){
 				return result;
 			},
 			
-			// вспомогательные функции для определения классов
-			defineSettableOnce = function(base, name){
-				var cap = util.capitalize(name);
-				var get = 'get' + cap, set = 'set' + cap;
-				(base[set] = function(v){ 
-					if(this[get] && this[get]()) 
-						throw new util.DefinitionException(name + ' must not be redefined. Old ' + name + ': ' + this[get](), base);
-					return this[get] = function(){ return v }, this;
-				}).call(base, null);
-			},
 			defineStorage = function(base, name, params, sortParam, filter){
 				var list = new UniqParamList(name, params), capName = capitalize(name), valsFunc = sortParam? 'sortedValues': 'values';
 			
@@ -125,22 +111,6 @@ var lang = (function(){
 				base['undefine' + capName] = function(param){ return list.remove(param), this };
 			
 				return this;
-			},
-			defineGetSet = function(base, name, parentRecurseParam){ // если указан имя параметра родителя - то будет рекурсивно искать в родителе значение
-				name = util.capitalize(name);
-				var get = 'get' + name, set = 'set' + name, pGet;
-				if(parentRecurseParam) pGet = getterOf(parentRecurseParam);
-				(base[set] = parentRecurseParam
-					?function(v){ 
-						return (base[get] = function(){ 
-							if(v) return v;
-							var p = this[pGet]();
-							if(!p) return null;
-							var m = p[get];
-							return m? m.call(p): null;
-						}), this }
-					:function(v){ return (base[get] = function(){ return v }), this }
-				).call(base, null);
 			};
 		
 		return {
@@ -154,14 +124,11 @@ var lang = (function(){
 			CodeGenerationException: LanguageException.derive('CodeGenerationException', function(msg, lexem){ this.msg = msg, this.lexem = lexem }),
 			
 			capitalize: capitalize,
-			getterOf: getterOf, 
 			addSlashes: addSlashes,
 			
 			groupBy: groupBy,
 			invertArray: invertArray,
 			
-			defineGetSet: defineGetSet,
-			defineSettableOnce: defineSettableOnce,
 			defineStorage: defineStorage
 		};
 		
@@ -198,119 +165,25 @@ var lang = (function(){
 			также токен/лексема может быть назначена абстрактной даже при наличии функции/последовательности, при необходимости
 				
 		*/
-		// basic proto-classes
-		var Token = function(){}, Lexem = function(){};
 		
-		var token = function(){
-				var token = function(content){ this.content = content; };
-				
-				util.defineSettableOnce(token, 'priority');
-				util.defineSettableOnce(token, 'name');	
-				util.defineGetSet(token, 'parse', 'parent');
-				util.defineGetSet(token, 'sequence');
-				
-				(token.setParent = function(parent){
-					console.trace();
-					this.prototype = new parent();
-					this.prototype.getName = function(){ return token.getName(); }
-					this.prototype.getContent = function(){ return this.content; }
-					this.prototype.toString = function(){ return 't:' + this.getName() + '(' + this.content + ')'; },
-					this.getParent = this.prototype.getParent = function(){ return parent };
-					return this;
-				}).call(token, Token);
-				
-				token.isAbstract = function(){ return !this.getPriority() || !this.getParse() };
-				token.toString = function(){ return 't:' + this.getName() };
-				token.parse = function(iter){
-					var parser = this.getParse();
-					if(!parser) throw new util.TokenizationException('no parsing function supplied for ' + token, iter.pos)
-					var content = parser.call(this || token, iter);
-					return content === undefined? null: new (this || token)(content);
+		// basic proto-classes
+		var LanguageUnit = new function(){
+				this.getInstanceConstructor = function(){
+					if(this.hasOwnProperty("instanceConstructor")) return this.instanceConstructor;
+					var result = this.instanceConstructor = function(){ this.constructor = result };
+					result.prototype = this;
+					return result;
 				}
-				
-				return token;
-			},
-			lexem = function(){
-				var lexem = function(content){
-					this.content = content = content || [];
-					var desc = this.getDescription();
-					if(content.length !== desc.length)
-						throw new util.AggregationException('could not form lexem of ' + content.length + ' parts: expected ' + desc.length + ' parts', lexem);
-					for(var i in desc){
-						var d = desc[i], c = content[i];
-						if(!(content[i] instanceof d.cls))
-							throw new util.AggregationException('lexem pattern violation: expected ' + d.cls + ' at position ' + i + ' (param name: ' + d.name + '), got ' + c + ' instead', lexem);
-						this[d.name] = c;
-					}
+				this.getInstance = function(){ 
+					return new (this.getInstanceConstructor())()
 				}
-				
-				lexem.description = [], lexem.pattern = []; // decsription = pattern + names
-				
-				util.defineSettableOnce(lexem, 'priority');
-				util.defineSettableOnce(lexem, 'name');
-				util.defineGetSet(lexem, 'translator', 'parent');
-				util.defineGetSet(lexem, 'sourcer', 'parent');
-				util.defineGetSet(lexem, 'parsingCondition', 'parent');
-				util.defineGetSet(lexem, 'parse');
-				util.defineGetSet(lexem, 'isRightAssociative');
-				util.defineGetSet(lexem, 'sourcerFormatString', 'parent');
-				util.defineGetSet(lexem, 'translatorFormatString', 'parent');
-				
-				(lexem.setParent = function(parent){
-					this.prototype = new parent();
-					this.prototype.getName = function(){ return lexem.getName(); }
-					this.prototype.getContent = function(){ return this.content; }
-					this.prototype.getDescription = function(){ return lexem.description; }
-					this.prototype.getTranslator = function(){ return lexem.getTranslator(); }
-					this.prototype.getSourcerFormatString = function(){ return lexem.getSourcerFormatString(); }
-					this.prototype.getTranslatorFormatString = function(){ return lexem.getTranslatorFormatString(); }
-					this.prototype.getSourcer = function(){ return lexem.getSourcer(); }
-					this.prototype.getDescription = function(){ return lexem.description; }
-					this.prototype.toString = function(tabs){ 
-						tabs = tabs || '';
-						var result = 'l:' + this.getName() + '(', desc = this.getDescription();
-						switch(this.content.length){
-							case 0: return result + ')';
-							case 1: return result + desc[0].name + ' = ' + this.content[0].toString('') + ')';
-							default:
-								var newTabs = tabs + '\t';
-								result += '\n';
-								for(var i in this.content) 
-									result += newTabs + desc[i].name + ' = ' + this.content[i].toString(newTabs) + '\n';
-								result += tabs + ')';
-								return result;
-						}
-					},
-					this.prototype.sourcefy = function(){
-						var sourcer = this.getSourcer();
-						if(!sourcer) throw new util.CodeGenerationException('no sourcefication function supplied for ' + this, this);
-						return sourcer.call(this);
-					}
-					this.prototype.translate = function(){
-						var translator = this.getTranslator();
-						if(!translator) throw new util.CodeGenerationException('no translation function supplied for ' + this, this);
-						return translator.call(this);
-					}
-					this.getParent = this.prototype.getParent = function(){ return parent };
-					return this;
-				}).call(lexem, Lexem);
-				
-				lexem.addPart = function(name, cls){ return this.pattern.push(cls), this.description.push({name:name, cls: cls}), this; }
-				lexem.isAbstract = function(){ return this.pattern.length < 1 }
-				lexem.getPattern = function(){ return this.pattern };
-				lexem.setPattern = function(val){ return this.pattern = val, this };
-				lexem.toString = function(){ return 'l:' + this.getName() };
-				lexem.parse = function(el, state){
-					var parse = this.getParse();
-					if(!parse) throw new util.AggregationException('no translation function supplied for ' + this, this);
-					return parse.call(this, el, state);
-				}
-				
-				lexem.setParse(defaultLexemParser);
-				
-				return lexem;
-			}
-			
+				this.is = function(desc){ return desc.hasOwnProperty("instanceConstructor")? this instanceof desc.instanceConstructor: false }
+				this.getParent = function(){ return this.constructor.prototype }
+				this.toString = function(){ return 'LanguageUnit' }
+			}, 
+			Token = LanguageUnit.getInstance(),
+			Lexem = LanguageUnit.getInstance();
+		
 		// изменяет состояние, если может; если не может - оставляет все как есть
 		// если изменил состояние - должен вернуть непустой ответ
 		var defaultLexemParser = (function(){
@@ -318,37 +191,41 @@ var lang = (function(){
 			var getRightAssociativeLexems = function(state, priority){ // вот это бы как-нибудь оптимизировать, некрасиво
 				var ls = state.aggregator.getLexems(), result = [];
 				for(var i in ls)
-					if(ls[i].getPriority() === priority && ls[i].getIsRightAssociative())
+					if(ls[i].priority === priority && ls[i].isRightAssociative)
 						result.push(ls[i]);
 				return result;
 			}
 			
-			var parseForward = function(lexems, el, state){
+			var parseForward = function(lexems, el){
 				var p;
 				for(var i in lexems)
-					if(p = lexems[i].parse(el, state))
+					if(p = lexems[i].parse(el))
 						return p;
 			}
 			
 			var parse = function(el){
 				var content = [], n = el; // собираем контент; заодно получаем концевую ноду
-				for(var i in this.pattern){
-					if(!n || !(n.val instanceof this.pattern[i])) return;
+				for(var i in this.description){
+					if(!n || !(n.val.is(this.description[i].cls))) return;
 					content.push(n.val);
 					n = n.next;
 				}
 				
-				var cond = this.getParsingCondition(); // учитываем условие парсинга
-				if(cond && !cond.call(this, el)) return;
+				if(this.parsingCondition && !this.parsingCondition(el)) return; // учитываем условие парсинга
 
-				if(n && n.prev && this.getIsRightAssociative()) { // учитываем правоассоциативность
-					var rolexs = getRightAssociativeLexems(el, this.getPriority());
-					var parsed = parseForward(rolexs, n.prev, el);
+				if(n && n.prev && this.isRightAssociative) { // учитываем правоассоциативность
+					var rolexs = getRightAssociativeLexems(el, this.priority),
+						parsed = parseForward(rolexs, n.prev, el);
 					if(parsed) content[content.length - 1] = parsed;
 					el.next = n.prev.next;
 				} else if(el.next = n) n.prev = el;
 				
-				return el.val = new this(content)
+				var result = this.getInstance();
+				result.content = content;
+				
+				for(var i in this.description) result[this.description[i].name] = result.content[i];
+				
+				return el.val = result;
 			};
 			
 			return parse;
@@ -375,38 +252,89 @@ var lang = (function(){
 				return result;
 			}
 			
-			return function(lexem, format, methodName){
+			return function(lexem, format, method){
 				
-				if(!format){
+				if(typeof(format) !== 'string'){
 					var result = [];
-					for(var i in lexem.content) result.push(lexem.content[i] instanceof Token? lexem.content[i].content: lexem.content[i][methodName]())
+					for(var i in lexem.content) result.push(lexem.content[i].is(Token)? lexem.content[i].content: lexem.content[i][method]())
 					return result.join(' ');
 				}
+				
 				format = format.split('$');
-				var result = '', imap = getIdentMap(lexem.getDescription());
+				var result = '', imap = getIdentMap(lexem.description);
 				result += format[0];
 				for(var i = 1; i < format.length; i++){
 					var ident = getIdentifier(format[i]);
 					if(ident in imap){
 						var ival = lexem.content[imap[ident]], rem = format[i].substr(ident.length);
-						if(ival instanceof Token) result += ival.content + rem;
-						else result += ival[methodName]() + rem;
+						if(ival.is(Token)) result += ival.content + rem;
+						else result += ival[method]() + rem;
 					} else result += '$' + format[i];
 				}
 				return result;
 			}
 			
 		})();
-		var defaultLexemSourcer = function(){ return populateFormatString(this, this.getSourcerFormatString(), 'sourcefy') }
-		var defaultLexemTranslator = function(){ return populateFormatString(this, this.getTranslatorFormatString(), 'translate') }
+		var defaultLexemSourcer = function(){ return populateFormatString(this, this.sourcerFormatString, 'sourcefy') }
+		var defaultLexemTranslator = function(){ return populateFormatString(this, this.translatorFormatString, 'translate') }
 		
-		util.defineGetSet(Lexem, 'sourcer');
-		util.defineGetSet(Lexem, 'translator');
-		util.defineGetSet(Lexem, 'parent');
+		Token.priority = 0;
+		Token.name = 'Token';
+		Token.content = undefined;
 		
-		Lexem.setSourcer(defaultLexemSourcer);
-		Lexem.setTranslator(defaultLexemTranslator);
-		Lexem.setParent(null);
+		Token.isAbstract = function(){ return !this.priority || !this.parser };
+		Token.parse = function(iter){
+			if(!this.parser) throw new util.TokenizationException('no parsing function supplied for ' + token, iter.pos);
+			var content = this.parser(iter);
+			if(content === undefined) return null;
+			var instance = this.getInstance();
+			instance.content = content;
+			return instance;
+		};
+		Token.toString = function(){ return 't:' + this.name + (this.content? '(' + this.content + ')': '') };
+		
+		Lexem.name = 'Lexem';
+		Lexem.priority = 0;
+		Lexem.parsingCondition = false;
+		Lexem.isRightAssociative = false;
+		Lexem.sourcerFormatString = null;
+		Lexem.translatorFormatString = null;
+		Lexem.sourcer = defaultLexemSourcer;
+		Lexem.translator = defaultLexemTranslator;
+		Lexem.parser = defaultLexemParser;
+		Lexem.description = null;
+		Lexem.content = null;
+		
+		Lexem.isAbstract = function(){ return !(this.description && this.description.length > 0) }
+		Lexem.toString = function(tabs){
+			if(!this.content) return 'l:' + this.name;
+			tabs = tabs || '';
+			var result = 'l:' + this.name + '(', desc = this.description;
+			switch(this.content.length){
+				case 0: return result + ')';
+				case 1: return result + desc[0].name + ' = ' + this.content[0].toString('') + ')';
+				default:
+					var newTabs = tabs + '\t';
+					result += '\n';
+					for(var i in this.content) 
+						result += newTabs + desc[i].name + ' = ' + this.content[i].toString(newTabs) + '\n';
+					result += tabs + ')';
+					return result;
+			}
+		}
+		Lexem.addPart = function(name, cls){ return (this.description || (this.description = [])).push({name:name, cls:cls}), this }
+		Lexem.sourcefy = function(){
+			if(!this.sourcer) throw new util.CodeGenerationException('no sourcefication function supplied for ' + this, this);
+			return this.sourcer();
+		}
+		Lexem.translate = function(){
+			if(!this.translator) throw new util.CodeGenerationException('no translation function supplied for ' + this, this);
+			return this.translator();
+		}
+		Lexem.parse = function(el){
+			if(!this.parser) throw new util.AggregationException('no parsing function supplied for ' + this, this);
+			return this.parser(el);
+		}
 		
 		var Tokenizer = function(){ 
 			util.defineStorage(this, 'token', ['name', 'priority'], 'priority', function(t){ return !t.isAbstract() });
@@ -463,33 +391,38 @@ var lang = (function(){
 			}
 		};
 		
-		var getPrioritiesListOf = function(arr){
-			var map = {}, result = [];
-			for(var i in arr) map[arr[i].getPriority()] = arr[i].getPriority();
-			for(var i in map) result.push(parseInt(i));
-			return result.sort(function(a,b){ return b - a; });
-		}
 		var Aggregator = function(tokenizer){ 
 			this.tokenizer = tokenizer;
 			util.defineStorage(this, 'lexem', ['name'], 'priority', function(l){ return !l.isAbstract() });
 		}
 		Aggregator.prototype = {
-			aggregate:function(tokens){
-				var allLexems = this.getLexems(),
-					lexemsByPriority = util.groupBy(allLexems, 'priority'),
-					priorities = getPrioritiesListOf(allLexems),
+			aggregate:(function(){
 				
-					state = new State(tokens, this.tokenizer, this), haveMatchInGroup;
+				var getPrioritiesListOf = function(arr){
+					var map = {}, result = [];
+					for(var i in arr) map[arr[i].priority] = arr[i].priority;
+					for(var i in map) result.push(parseInt(i));
+					return result.sort(function(a,b){ return b - a; });
+				}
 				
-				while(true){
-					for(var i in priorities) if(haveMatchInGroup = state.tryMutate(lexemsByPriority[priorities[i]])) break;
+				return function(tokens){
+					var allLexems = this.getLexems(),
+						lexemsByPriority = util.groupBy(allLexems, 'priority'),
+						priorities = getPrioritiesListOf(allLexems),
 					
-					if(!haveMatchInGroup){
-						if(state.isMutatedCompletely()) return state.getMutationsResult();
-						else throw new util.AggregationException('could not find matching lexem', state);
+						state = new State(tokens, this.tokenizer, this), haveMatchInGroup;
+					
+					while(true){
+						for(var i in priorities) if(haveMatchInGroup = state.tryMutate(lexemsByPriority[priorities[i]])) break;
+						
+						if(!haveMatchInGroup){
+							if(state.isMutatedCompletely()) return state.getMutationsResult();
+							else throw new util.AggregationException('could not find matching lexem', state);
+						}
 					}
 				}
-			}
+				
+			})()
 		}
 		
 		var State = function(tokens, tokenizer, aggregator){
@@ -504,15 +437,17 @@ var lang = (function(){
 			createElement: function(val){ return {val:val, tokenizer: this.tokenizer, aggregator:this.aggregator, state:this}; },
 			tryMutate: function(lexems){ 
 				var node = this.first, localResult, result;
+				if(!node) return;
 				while(true){
 					do{
-						for(var i in lexems)
-							if(result = (localResult = lexems[i].parse(node)) || result, localResult) break;
+						for(var i in lexems){
+							if((result = (localResult = lexems[i].parse(node)) || result), localResult) break;
+						}
 					} while(localResult);
 					if(!(node = node.next)) return result;
 				}
 			},
-			isMutatedCompletely: function(){ return this.first && !this.first.next && this.first.val instanceof Lexem },
+			isMutatedCompletely: function(){ return this.first && !this.first.next && this.first.val.is(Lexem) },
 			getMutationsResult: function(){ return this.first.val; },
 			toString: function(){
 				var el = this.first, result = [];
@@ -523,7 +458,7 @@ var lang = (function(){
 		
 		var CharacterGroup = function(firstArg){ // designed to be immutable
 			this.chars = {};
-			util.defineSettableOnce(this, 'name');
+			this.name = null;
 			var args = Array.isArray(firstArg)? firstArg: arguments;
 			for(var i = 0; i < args.length; i++){
 				var arg = args[i];
@@ -542,8 +477,7 @@ var lang = (function(){
 		}
 		
 		var Processor = function(algo){ // class to bind name and priority to some function
-			util.defineSettableOnce(this, 'name');
-			util.defineSettableOnce(this, 'priority');
+			this.name = this.priority = null, this.algo = algo;
 			this.algo = algo;
 		}
 		Processor.prototype.apply = function(){ return this.algo.apply(this, arguments); }
@@ -555,10 +489,7 @@ var lang = (function(){
 			Processor: Processor,
 			Aggregator: Aggregator, 
 			State: State,
-			Lexem: Lexem,
-			
-			token: token,
-			lexem: lexem
+			Lexem: Lexem
 		};
 	
 	})();
@@ -568,21 +499,16 @@ var lang = (function(){
 		var tokens = {}, lexems = {}, groups = {},
 			t = tokens, l = lexems; // just to keep code short
 			
-		var group = function(name, content){ return groups[name] = new ast.CharacterGroup(content).setName(name); },
-			token = function(parent, name, priority, parse, isAbstract){
-				return tokens[name] = ast.token()
-					.setParent(parent? tokens[parent]: ast.Token)
-					.setName(name)
-					.setPriority(priority)
-					.setParse(parse);
+		var group = function(name, content){
+				var result = groups[name] = new ast.CharacterGroup(content);
+				result.name = name;
+				return result;
 			},
 			processor = function(name, priority, func){
-				return new ast.Processor(func)
-					.setName(name)
-					.setPriority(priority);
-			}
-			
-		var isIdentifier = function(str){ return str.length > 0 && groups.identifierStart.have(str.charAt(0)) && groups.identifier.isMakingUp(str) };
+				var result = new ast.Processor(func);
+				result.name = name, result.priority = priority;
+				return result;
+			};
 		
 		var groupsRaw = [
 			group('binDigits', ['01']),
@@ -596,6 +522,7 @@ var lang = (function(){
 		]
 		
 		var key = (function(){
+			
 			var generatePriorityForKey = (function(){
 			
 				var offset = 10000, keysPerLength = 1000, maxPriority = 0x8fffffff, ownedValues = {};
@@ -618,41 +545,24 @@ var lang = (function(){
 				
 			})();
 			
+			var isIdentifier = function(str){ return str.length > 0 && groups.identifierStart.have(str.charAt(0)) && groups.identifier.isMakingUp(str) };
+			
 			return function(name, word){
-				var result = tokens[name] = ast.token()
-					.setParent(tokens[isIdentifier(word)? 'KeyWord': 'KeySequence'])
-					.setName(name)
-					.setPriority(generatePriorityForKey(word))
-					
-				result.prototype.sequence = result.sequence = word;
-				return key;
+				var result = tokens[name] = tokens[isIdentifier(word)? 'KeyWord': 'KeySequence'].getInstance();
+				result.name = name;
+				result.priority = generatePriorityForKey(word);
+				result.sequence = word;
+				return result;
 			}
 			
 		})();
-		
-		var lexem = function(parent, name, priority, patternWithNames, toCode, isAbstract, reverseLookaheadLength, condition){
-			var l = lexems[name] = ast.lexem()
-				.setParent(parent? lexems[parent]: ast.Lexem)
-				.setName(name)
-				.setPriority(priority)
-				.setParsingCondition(condition)
-				.setIsRightAssociative(reverseLookaheadLength > 0);
-				
-			for(var i in patternWithNames)
-				for(var j in patternWithNames[i])
-					l.addPart(j, patternWithNames[i][j]);
-					
-			if(toCode) l.setTranslator(toCode);
-					
-			return l;
-		}
 		
 		var duplicateUnaryOperatorAggregationCondition = function(priority){
 			
 			var filterLexemByClass = function(lexems, cl){
 				var result = [];
 				for(var i in lexems)
-					if(lexemHaveAncestor(lexems[i], cl))
+					if(lexems[i].is(cl))
 						result.push(lexems[i]);
 				return result;
 			}
@@ -661,21 +571,15 @@ var lang = (function(){
 				var result = [];
 				for(var i in lexems){
 					var lexem =	lexems[i];
-					if(!lexem.isAbstract() && (token instanceof lexem.pattern[lexem.pattern.length - 1]))
+					if(!lexem.isAbstract() && token.is(lexem.description[lexem.description.length - 1].cls))
 						result.push(lexem);
 				}
 				return result;
 			}
 			
-			var lexemHaveAncestor = function(lexem, ancestor){
-				return !lexem? false:
-						lexem === ancestor? true:
-						lexemHaveAncestor(lexem.getParent(), ancestor);
-			}
-			
 			return function(el){
 				if(!el.prev) return true;
-				if(el.prev.val instanceof ast.Lexem) return false;
+				if(el.prev.val.is(ast.Lexem)) return false;
 				
 				var possibleLexems = lexemsEndingWith(el.aggregator.getLexems(), el.prev.val);
 				var expressionLexems = filterLexemByClass(possibleLexems, l.Expression);
@@ -832,11 +736,12 @@ var lang = (function(){
 		(function(){
 			
 			var token = function(name, desc, parent){
-				var result = tokens[name] = ast.token().setName(name).setParent(parent);
+				var result = tokens[name] = parent.getInstance();
+				result.name = name;
 				for(var i in desc)
 					switch(i){
-						case 'priority': result.setPriority(desc.priority); continue;
-						case 'parse': result.setParse(desc.parse); continue;
+						case 'priority': result.priority = desc.priority; continue;
+						case 'parse': result.parser = desc.parse; continue;
 						default: token(i, desc[i], result); continue;
 					}
 			}
@@ -886,6 +791,7 @@ var lang = (function(){
 					},
 					BinaryOperator:{t:"($left$sign$right)",
 						Comma: { pr: 100, pat: "left:l:Expression sign:t:Comma right:l:Expression"},
+						
 						Assignment: {pr: 200, pat: "left:l:Identifier sign:t:Equals right:l:Expression", ra:true},
 						AdditionAssignment: {pr: 200, pat: "left:l:Identifier sign:t:PlusEquals right:l:Expression", ra:true},
 						SubtractionAssignment: {pr: 200, pat: "left:l:Identifier sign:t:MinusEquals right:l:Expression", ra:true},
@@ -945,10 +851,11 @@ var lang = (function(){
 		(function(){
 			
 			var lexem = function(name, desc, parent){
-				var result = lexems[name] = ast.lexem().setName(name).setParent(parent);
+				var result = lexems[name] = parent.getInstance();
+				result.name = name;
 				for(var i in desc)
 					switch(i){
-						case 'pr': result.setPriority(desc.pr); continue;
+						case 'pr': result.priority = desc.pr; continue;
 						case 'pat': 
 							var parts = desc.pat.split(' ');
 							for(var i in parts){
@@ -956,11 +863,11 @@ var lang = (function(){
 								result.addPart(sp[0], (sp[1] === 'l'?l:t)[sp[2]]);
 							}
 							continue;
-						case 'tf': result.setTranslator(desc.tf); continue;
-						case 'sf': result.setSourcer(desc.tf); continue;
-						case 't': result.setTranslatorFormatString(desc.t); continue;
-						case 'ra': result.setIsRightAssociative(desc.ra); continue;
-						case 'cond': result.setParsingCondition(desc.cond); continue;
+						case 'tf': result.translator = desc.tf; continue;
+						case 'sf': result.sourcer = desc.tf; continue;
+						case 't': result.translatorFormatString = desc.t; continue;
+						case 'ra': result.isRightAssociative = desc.ra; continue;
+						case 'cond': result.parsingCondition = desc.cond; continue;
 						default: lexem(i, desc[i], result); continue;
 					}
 			}
@@ -971,9 +878,10 @@ var lang = (function(){
 		var tokenizerPostProcessors = [
 			processor('removeTrashTokens', 100,function(t){
 				var result = [];
-				for(var i in t)
-					if(!(t[i] instanceof tokens.TrashToken))
+				for(var i in t){
+					if(!(t[i].is(tokens.TrashToken)))
 						result.push(t[i]);
+				}
 				return result;
 			})
 		]
@@ -984,8 +892,6 @@ var lang = (function(){
 			groups: groupsRaw,
 			
 			tokenizerPostProcessors: tokenizerPostProcessors,
-			
-			defineToken: token
 		}
 	
 	})();
@@ -1011,11 +917,11 @@ var lang = (function(){
 		},
 		
 		tokenize: function(str, tokenizer, aggregator){ return (tokenizer || this.getTokenizer()).tokenize(str, aggregator || this.getAggregator()); },
-		aggregate: function(tokens, aggregator){ return (aggregator || this.getAggregator()).aggregate(tokens); },
+		aggregate: function(tokens, tokenizer, aggregator){ return (aggregator || this.getAggregator(tokenizer)).aggregate(tokens); },
 		
 		treeOf: function(str){ 
 			var t = this.getTokenizer(), a = this.getAggregator(t);
-			return this.aggregate(this.tokenize(str, t, a), a); 
+			return this.aggregate(this.tokenize(str, t, a), t, a); 
 		}
 	}
 	
