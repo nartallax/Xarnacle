@@ -19,18 +19,14 @@ Unit.define = (name, constr, obj, base) => {
 
 	constr.prototype = new base();
 	
-	Object.keys(obj).forEach(key => {
-		constr.prototype[key] = obj[key];
-	})
+	Object.keys(obj).forEach(key => constr.prototype[key] = obj[key])
 	
 	constr.prototype.getName = () => name;
 	
 	// trick to ensure good value in ident param
 	var transCode = constr.prototype.toTranslatedCode;
 	constr.prototype.toTranslatedCode = function(ident, prefix, postfix){
-		return this.isEmpty()?
-			'': 
-			(prefix || '') + transCode.call(this, ident || '') + (postfix || '');
+		return this.isEmpty()? '': (prefix || '') + transCode.call(this, ident || '') + (postfix || '');
 	};
 	
 	if(name in units)
@@ -89,7 +85,7 @@ Unit.prototype = {
 	},
 	
 	fail: function(msg){
-		throw new Error('Error in file ' + this.fileName + ' at line ' + this.lineNumber + ', at column ' + this.columnNumber + ':\n  ' + msg);
+		throw new Error('Error in file ' + this.fileName + ' at line ' + this.lineNumber + ', at column ' + this.columnNumber + ':\n\t' + msg);
 	},
 	
 	failNeedType: function(){
