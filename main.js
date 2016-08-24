@@ -1,12 +1,7 @@
-var requireLocal = name => {
-	var sep = require('path').sep;
-	name = name.replace(/.[Jj][Ss]$/, '') + '.js';
-	name = name.split(/[\\\/]/).join(sep)
-	return require(__dirname + sep + name);
-}
+require(__dirname + require('path').sep + 'script' + require('path').sep + 'commons.js')(__dirname + require('path').sep + 'script');
 
-var args = requireLocal('args'),
-	SelfTester = requireLocal('selfTester');
+var args = requireRelative('commons/args'),
+	SelfTester = requireRelative('selftesting/selftester');
 
 var targetToRunnerMap = {
 	'selftest': SelfTester

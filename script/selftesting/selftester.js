@@ -1,5 +1,4 @@
-var parseCode = require('./parser.js'),
-	testCases 
+var parseCode = requireRelative('parser');
 
 var SelfTester = function(testCases, allowedTestNames, dontCatchTestExceptions){
 	this.testCases = testCases;
@@ -14,12 +13,12 @@ SelfTester.prototype = {
 	eachTest: function(action, prefix, data){
 		data = data || this.testCases;
 		prefix = prefix || '';
-		var keys = Object.keys(data);
-		if('input' in data){
-			action(data, prefix);
+		
+		if(Array.isArray(data)){
+			data.forEach((d, index) => action(d, prefix + '.' + index));
 		} else {
 			prefix && (prefix += '.');
-			keys.forEach(name => this.eachTest(action, prefix + name, data[name]));
+			Object.keys(data).forEach(name => this.eachTest(action, prefix + name, data[name]));
 		}
 	},
 	
@@ -131,7 +130,7 @@ SelfTester.parserChecker = testCase => {
 SelfTester.fromArgs = args => {
 	var allowedTestNames = args.valuesAfter('--specific')
 	var failFast = args.haveOne('--fail-fast')
-	var pathToTestFile = args.absolutizePath(args.oneOrZeroValueAfter('--tests') || 'selftests', 'js');
+	var pathToTestFile = args.absolutizePath(args.oneOrZeroValueAfter('--tests') || '../selftesting/selftests', 'js');
 	var testCases = require(pathToTestFile);
 	return new SelfTester(testCases, allowedTestNames, failFast);
 }

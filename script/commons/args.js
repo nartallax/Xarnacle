@@ -1,4 +1,4 @@
-var args = (() => {
+module.exports = (() => {
 	var argArr = Array.prototype.slice.call(process.argv, 2);
 	
 	var args = {
@@ -74,5 +74,3 @@ var args = (() => {
 	return args;
 	
 })();
-
-typeof(module) !== 'undefined' && (module.exports = args);
