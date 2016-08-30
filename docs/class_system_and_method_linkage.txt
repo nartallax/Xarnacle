@@ -1,0 +1,29 @@
+About class system, method linkage and so on.
+
+There is only two entities that represent class system - Trait and Class.
+There is two differences between them: Trait can be inherited and cannot be instantiated; Class can be instantiated and cannot be inherited.
+
+This is done for two reasons.
+1. Optimization: Class will always have constant set of methods, so we can link them statically.
+2. Explicit generalization: most of the time, code that uses classes instead of interfaces is not intended to be reused with class instances inheriting original class; i.e. ability to inherit arbitrary class don't grant code flexibility its meant to grant. Every effort to make code more flexible should be explicit; that is, methods working with interfaces (Traits), not classes.
+
+Both Traits and Classes can have fields and methods. Traits can also have methods without implementation (while Classes obviously can not).
+Methods could have accessibility restrictions: they could be private, public and protected. Class could not have protected methods (as it won't be different from private). Private methods may not be inherited.
+
+Private methods and all methods called on a Class instance (not Trait instance) are always statically linked. Others are linked dynamically.
+
+Dynamic linkage is achieved through reflection.
+To achieve reflection, every class instance have a pointer to description of the class. This description includes all the method desciptions of class, information about inheritance tree and so on.
+
+Instances are passed by reference, as they are structs. Passing reference by value is possible, though it should be stated explicitly (it's not recommended to do so).
+But not every value is instance of some class; some values are scalars and usually passed by value.
+This difference becomes really big when speaking about generic classes and methods.
+
+To make creating of generic classes easier, there is some pseudotypes: Scalar, Object and Any (that is superclass for Scalar and Object).
+Generally (speaking of class/method that have Object type parameter) any generic method could accept as parameter and return as result a pointer to real value, and (in case of collections) store values as pointer as well.
+But in case of scalars that is not acceptable: always using scalar by reference is a performance hit (consider Array of byte for example); and, as long as scalars have multiple sizes (1, 2, 4, 8 bytes) it's not possible to write single function that will accept any scalar value and handle it in expected way.
+Unrolling is solution in this case. That is, any generic method/class definition that could accept scalar value will be generated 1 'default' implementation (for reference types) and 4 'scalar' implementations (one for each scalar size).
+This is the reason why generic parameters must not be dereferenced: they are not always the references.
+
+TODO: think about calling conventions on different platforms
+

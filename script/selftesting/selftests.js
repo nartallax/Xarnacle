@@ -4,7 +4,7 @@ var testData = {
 		simpleExpressions: [
 			{input: '1 + 1', code: '1 + 1'}
 		],
-		
+/*		
 		globalVariables: [
 			{input: 'val numberGlobalVal = 5', code: 'const long long int numberGlobalVal = 5;'},
 			{input: 'var numberGlobalVar = 5', code: 'long long int numberGlobalVar = 5;'}
@@ -33,6 +33,7 @@ var testData = {
 			{input: 'val func = int => int = a => { val tmp = a + 5; tmp}', code: 'int func(int a){\n\tconst int tmp = a + 5;\n\treturn tmp;\n}'}, // some more complex functions
 			{input: 'val func = int => int = a => { var tmp = a + 5; tmp *= 2; tmp}', code: 'int func(int a){\n\tint tmp = a + 5;\n\ttmp *= 2;\n\treturn tmp;\n}'},
 		]
+		*/
 	}
 };
 

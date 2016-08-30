@@ -36,12 +36,15 @@ module.exports = tokenDictionary => {
 	t['Token.Literal'].define('String', 0, reader => readString(reader), '"');
 	
 	t['Token'].define('Operator', 100);
-	t['Token.Operator'].define('DoubleMinus', 1, '--');
-	t['Token.Operator'].define('Minus', 0, '-');
-	t['Token.Operator'].define('DoublePlus', 1, '++');
-	t['Token.Operator'].define('Plus', 0, '+');
-	t['Token.Operator'].define('DoubleAsterisk', 1, '**');
-	t['Token.Operator'].define('Asterisk', 0, '*');
-	t['Token.Operator'].define('Slash', 0, '/');
+	
+	t['Token.Operator'].define('Unary', 1);
+	t['Token.Operator.Unary'].define('DoubleMinus', 0, '--');
+	t['Token.Operator.Unary'].define('DoublePlus', 0, '++');
+	
+	t['Token.Operator'].define('Binary', 0);
+	t['Token.Operator.Binary'].define('Minus', 0, '-');
+	t['Token.Operator.Binary'].define('Plus', 0, '+');
+	t['Token.Operator.Binary'].define('Asterisk', 0, '*');
+	t['Token.Operator.Binary'].define('Slash', 0, '/');
 
 }
