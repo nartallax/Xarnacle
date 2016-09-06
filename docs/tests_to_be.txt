@@ -1,0 +1,30 @@
+Tests to be:
+
+1. Compile mark tests - situations where files altered and files not altered are combined in various ways
+For these tests run of full-scale compilation is needed. Testing mark algorithm alone is not too profitable.
+	* Code files:
+		* no code files -> no recompile
+		* one altered code file -> one recompile
+		* one not altered code file -> no recompile
+		* two independent files, one altered and other not -> one recompile
+		* same, both altered -> both recompile
+		* one file depending on other file, beneficiar altered -> one recompile
+		* same, but only requirement altered -> both recompile
+		* same, both altered -> both recompile
+		* two (three, four) recursive dependent files -> error
+		* single source file deleted -> no recompile of files, but recompile of artifact
+		* two independent source files, one got deleted -> same
+		* same, both deleted -> same
+		* two files, one requirement and other beneficiar, beneficiar deleted -> same
+		* same, but requriement deleted -> beneficiar recompiles (with error)
+		* same, and also beneficiar altered to remove dependency -> beneficiar recompiles (with success)
+		* same, and also beneficiar altered NOT to remove dependency -> beneficiar recompiles (with error)
+	* External libraries:
+		* altered library alone triggers beneficiars to recompile
+		* altered library with one altered beneficiars -> both beneficiars recompile
+		* not altered library, altered one beneficiar -> one beneficiar recompile
+		* not altered library, altered both beneficiars -> both recompile
+		* not altered anything -> no recompile
+		* deleted library -> recompile of beneficiars (with error)
+		* deleted library, altered beneficiar (removed library dependency) -> recompile (with success)
+		* deleted library, altered beneficiar (NOT removed library dependency) -> recompile (with success)

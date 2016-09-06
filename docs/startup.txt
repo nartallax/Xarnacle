@@ -1,0 +1,14 @@
+Startup
+
+Startup of application is little complicated as some additional data needs to be loaded.
+
+Startup steps for application are:
+
+* classload: reflection information about classes and functions is loaded from some storage inside executable
+* dllload: libraries that this executable was linked against are loaded. At library load, some init method is invoked and a reference to reflection root is passed there. This is done to avoid duplication of reflection storages. For external language dlls, no reference is passed, as long as there is no point in doing that.
+Library is loaded by placing all references to functions and values in corresponding variables (TODO: verify)
+* value_init: all the variables that have composite values are initialized by these values
+* run: start of user-defined code
+
+For DLL, steps differs not much. The difference is:
+* reflection storage created only in case of absence of 'master' reflection storage (this is the case when dll is loaded from external language)
