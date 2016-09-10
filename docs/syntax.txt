@@ -1,0 +1,7 @@
+Syntax.
+
+Code of a program consists of following parts:
+	* imports, that defines what symbols could be short-referenced from the code
+	* global function definitions
+	* Class and Structure definitions
+Global variables are not allowed.
