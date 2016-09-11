@@ -2,6 +2,15 @@ Syntax.
 
 Code of a program consists of following parts:
 	* imports, that defines what symbols could be short-referenced from the code
-	* global function definitions
-	* Class and Structure definitions
-Global variables are not allowed.
+	* global variables, function, Class, Trait and Structure definitions
+	
+	* class/trait/structure declaration is:
+		* data section: fields of the instance of the class/trait/structure, maybe with default value
+		* method section: implementation of methods
+		* (for class/trait): inheritance
+		
+function type definition: 
+	* var int a: int => int = a => { ... }
+	* val a = (int a, int b) => int { ... }
+	
+	
