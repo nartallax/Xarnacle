@@ -2,15 +2,35 @@ Syntax.
 
 Code of a program consists of following parts:
 	* imports, that defines what symbols could be short-referenced from the code
-	* global variables, function, Class, Trait and Structure definitions
+	* global variables, function, Class, Trait and Structure defintions
 	
-	* class/trait/structure declaration is:
-		* data section: fields of the instance of the class/trait/structure, maybe with default value
+	* class/trait/structure definition is:
+		* data section (only class/struct): fields of the instance of the class/structure, maybe with default value
 		* method section: implementation of methods
 		* (for class/trait): inheritance
+	
+	* everything else is Expression (function body, default values of variables etc)
 		
-function type definition: 
-	* var int a: int => int = a => { ... }
-	* val a = (int a, int b) => int { ... }
-	
-	
+variable/field definition:
+[modifiers] (val|var) a: VariableType [= VariableDefaultValue]
+		
+
+function definition: 
+
+[modifiers] def a(param_a: int, param_b: String): long = { ... }
+[modifiers] (val|var) a: (int, int) => long = (a, b) => { ... }
+
+The difference is, first definition creates function named a; second definition creates anonymous function, creates variable named a with corresponding type and set value of the variable to pointer to function. Also functions defined with 'def' have access to 'this' when declared inside class.
+
+
+vararg function definition:
+
+def a(param_a: int, params_other: String ...): Long = { ... }
+val a: (int, String ...) => Long = (param_a, params_other) => { ... }
+
+
+class definition:
+
+struct MyStruct {}
+trait MyTrait: TraitA[, TraitB[...]] [{ ... }]
+class MyClass: (Object|Value) [with TraitA[, TraitB[...]]] [{ ... }]
