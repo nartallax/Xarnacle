@@ -6,9 +6,9 @@ module.exports = Object.derive(function(file, line, col, totalCharsFromFileStart
 }, {
 	toString: function(){
 		var result = '';
-		this.filename && (result += 'in file ' + this.file + ' ');
+		this.filename && (result += 'file: ' + this.file + ', ');
 		
-		return result + 'on line ' + this.line + ', at char ' + this.column;
+		return result + 'line: ' + this.line + ', column: ' + this.column;
 	}
 });
 

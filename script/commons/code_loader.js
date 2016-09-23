@@ -19,11 +19,7 @@ var CodeLoader = (() => {
 			});
 		},
 		
-		loadDirectory: function(dirPath){ this.doWithAllFiles(dirPath, (filePath, code) => eval(code)) },
-		
-		packForHtml: function(doWithPackedFile){
-			???
-		}
+		loadDirectory: function(dirPath){ this.doWithAllFiles(dirPath, (filePath, code) => eval(code)) }
 	}
 	
 	CodeLoader.forFSAndPath = (fs, path) => new CodeLoader(
@@ -32,7 +28,7 @@ var CodeLoader = (() => {
 		path => fs.readFileSync(path, 'utf8'),
 		path.sep
 	);
-	
+	/*
 	CodeLoader.forBrowser = (doc, separator, pathAttrName) => {
 		path => {
 			var nodes = doc.querySelectorAll('*[' + pathAttrName + '^="' + path + '"]')
@@ -41,12 +37,15 @@ var CodeLoader = (() => {
 		
 		separator
 	}
-	
+	*/
+	// TODO: packing for browser, if we will ever need it
 	CodeLoader.default = (() => {
 		if(typeof(require) !== 'undefined' && typeof(module) !== 'undefined'?){
 			return CodeLoader.forFSAndPath(require('fs'), require('path'));
+			/*
 		} else if(typeof(window) !== 'undefined' && typeof(window.document) !== 'undefined') {
 			return CodeLoader.forBrowser(window.document, CodeLoader.prototype.defaultSeparator, 'data-code-file-path');
+			*/
 		} else {
 			throw new Error('Could not create code loader: unknown or unprepared environment. Try waiting for initialization first.');
 		}

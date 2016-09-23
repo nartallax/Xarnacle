@@ -1,4 +1,4 @@
-module.exports = () => {
+(() => {
 
 	var getProtoInstanceFunction = cstr => {
 		var FakeConstr = function(){}
@@ -51,4 +51,4 @@ module.exports = () => {
 	
 	Function.prototype.getProtoInstance = Function.getProtoInstance = getProtoInstanceFunction(null);
 
-};
+})();
