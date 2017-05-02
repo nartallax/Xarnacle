@@ -129,3 +129,7 @@ So there are following compilation steps:
 		* flush: translated code is flushed to translated code file; init code is flushed to init code file
 	* objectize (par): each of translated code files are run through some C compiler (expected GCC, but not totally bound to it); object files are produced as output for each file.
 	* link: all of object files (not only generated on steps before; all the object files for the project) are linked (by underlying compiler) into some executable, depending on target type.
+	
+TODO: move this outta here and translate
+Generics: имеет значение только размер данных generic-типа; соответственно, достаточно генерировать по одному классу для каждого из используемых размеров типов. Соответсвенно, для того, чтобы было возможно паковать generic-и в библиотеки, нужно таскать их код с собой. т.е. библиотеки распространяются в виде исходного кода, а уже при компиляции из них собираются dll-ки.
+vtable - возможен традиционный подход, а возможен и альтернативный. традиционный плох из-за возможного изменения ссылки при приведении типов (и избыточности хранения нескольких vtable-ов для одного класса), альтернативный привносит большой оверхед. нужно обдумать.

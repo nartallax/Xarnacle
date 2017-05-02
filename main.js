@@ -30,4 +30,3 @@ try {
 } catch(e){
 	console.error(e.isArgumentParsingError? e.message: e);
 }
-

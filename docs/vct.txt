@@ -1,0 +1,66 @@
+Virtual Call Table layout.
+
+It's tricky topic. Here I'll describe how my idea about VCT evolved.
+Let's assume that we have four classes: W, X, Y, Z; X inherits from W, Z inherits from X and Y. Each class have some fields and methods.
+
+
+
+There is classical approach (used in GCC for C++):
+
+Instance layout: | &vct_x | x_field_a | x_field_b | &vct_y | y_field_a | y_field_b | z_field_a | ...
+vct_x layout: | w_method_a | w_method_b | x_method_a | x_method_b | z_method_a | ...
+vct_y layout: | y_method_a | y_method_b |
+
+And... it works fine... at least, close to.
+
+Pros: fast access to method pointer (1 random-read), could be builded without any knowledge about non-parent classes
+Cons: after class cast, pointer value could change (as well as not change), that's confusing; hard to build VCT (there are some unobviousities, like what method should go in what table); multiple pointers within instance take additional memory; multiple VCT take additional memory
+
+Last two cons could really become a disaster when talking about a large class model where multiple inheritance is quite common.
+
+
+
+Let's take a stupid approach: each class have exactly one VCT filled with all method pointers applicable to instance of the class.
+The point is, every method have signature (name + parameter type sequence + result type); let's enumerate all signatures we meet and fill VCTs accordingly.
+The only rule of forming the VCT is "methods with same signature must have same index in VCT".
+So, in runtime call will look like "instance->vct[signature_id](instance, ...args)"
+
+Instance: | &vct | x_field_a | y_field_a | z_field_a | ...
+vct: | w_method_a | x_method_a | y_method_a | z_method_a | ...
+
+But it's hardly usable in practise.
+
+Pros: still fast access to method pointer (1 random-read), pointer value remains same after classcast
+Cons: may require additional effort to maintain method calls, since fields offsets are shifted in different classes; still hard to build (there's tradeoff - your VCT grows big as hell or your compile time is increased... and mind blown)
+
+There are problem of maintaining a VCTs for multiple classes, as there may be clashes between their methods; we must either build compressed table (that will have spaces anyway; compressed means multiple signatures could share same index if not clashing) or uncompressed table (which will be really, really big and consists mostly of padding).
+
+And, after all, that's also will be nearly impossible to call a method, as long as we don't store anywhere pointer to first field of a parent class (or offset of this field); without it, call is not possible.
+
+
+
+All right, previous approach was really bad.
+Let's do something similar, but different. For instance, let's enumerate not method signatures, but classes. All classes in compilable space are enumerated from 0. Methods are enumerated within a class.
+For each terminal class we will create a VCT for each class it inherits from (recursively); at start of each VCT (0th element) we will place offset of the first field of target terminal class (to make the call possible); and after that we will place pointers to methods of the class.
+Then, for each class we will form a table of tables, where all the actual VCTs will be enumerated.
+Runtime method call will look like "instance->vctt[class_id][method_id](instance + vctt[class_id][0], ...args)"
+
+Instance: | &vctt | x_field_a | y_field_a | z_field_a| ...
+vctt: | &vct_w | &vct_x | &vct_y | &vct_z
+vct_z: | offset_y (in this case = sizeof(&vctt) + sizeof(x_field_a)) | y_method_a | y_method_b | ...
+...
+
+Pros: type conversion does not change pointer value; memory is saved on repeated VCTs
+Cons: need good compaction algo, or VCTTs will take a lot of memory; not-so-fast call (3 random-reads per call)
+
+If speaking abount single compilation, some simple compaction algo will work just fine; that is, detect a non-intersecting classes and place them at the same index of the array. Intersection between two classes happens when some other class inherits from both of intersecting classes (and so these classes could not occupy same index in the vctt array).
+
+
+
+
+But programmers usually want more than just one compilation. It's quite common to change a small piece of code, recompile an app and see how its behavior will change. So we need the compilation time be as fast as possible - that is, it must be lineary dependent of code changes amount. Any compaction algo just won't work because we cannot guarantee that no new intersections between classes are created in code changes - and if intersection is created, we must shift indices of classes - and that mean recompilation of lots of code.
+
+To overcome that, let's introduce a 'debug' compilation and 'release' compilation.
+During 'release' compilation, all VCTTs are built from scratch by algo described above (and they are just arrays).
+During 'debug' compilation, we will build VCTTs independently for each class; only indices of classes will be the same, intersections will be resolved in some smarter manner.
+
